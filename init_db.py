@@ -67,27 +67,32 @@ def seed_database(criar_dados_demo: bool = True):
         # 4. Blocos e Setores hospitalares
         if criar_dados_demo:
             blocos_info = [
-                ("BLOCO A - INTERNAÇÃO", "#0284c7"),
-                ("BLOCO B - DIAGNÓSTICO", "#0d9488"),
-                ("PRONTO SOCORRO", "#dc2626"),
-                ("UTI GERAL", "#b91c1c"),
-                ("CENTRO CIRÚRGICO", "#7c3aed"),
-                ("AMBULATÓRIO", "#ca8a04"),
-                ("FARMÁCIA CENTRAL", "#16a34a"),
+                ("Bloco Central", "#0284c7"),
+                ("Pronto Socorro", "#dc2626"),
+                ("UTI Geral", "#b91c1c"),
+                ("Centro Cirúrgico", "#7c3aed"),
+                ("Maternidade", "#ec4899"),
+                ("Ambulatório", "#ca8a04"),
+                ("Administrativo", "#0d9488"),
             ]
             for b_nome, cor in blocos_info:
                 if not session.query(Bloco).filter(Bloco.nome == b_nome).first():
                     session.add(Bloco(nome=b_nome, cor=cor, ativo=True))
 
             setores_info = [
-                "Recepção Central",
-                "Triagem e Classificação",
-                "Posto de Enfermagem 1",
-                "Posto de Enfermagem 2",
-                "Sala de Emergência Vermelha",
-                "Box UTI Leito 01 a 10",
-                "Expedição Farmácia",
-                "Supervisão TI e Infra",
+                "Recepção",
+                "Triagem",
+                "Consultórios",
+                "Enfermagem",
+                "Coordenação",
+                "Salas Cirúrgicas",
+                "RPA",
+                "Internação",
+                "Atendimento",
+                "Tecnologia da Informação",
+                "Diretoria",
+                "Farmácia",
+                "CDI",
             ]
             for s_nome in setores_info:
                 if not session.query(Setor).filter(Setor.nome == s_nome).first():
@@ -95,47 +100,41 @@ def seed_database(criar_dados_demo: bool = True):
 
             session.flush()
 
-            # 5. Ramais VoIP Cisco demonstrativos
+            # 5. Ramais VoIP Cisco demonstrativos sincronizados com store.json (13 ramais)
             ramais_exemplo = [
-                # Bloco A
-                ("Cisco CP-7821", "00:1B:54:A1:10:01", "1001 - Recepção Principal A", "127.0.0.1", "BLOCO A - INTERNAÇÃO", "Recepção Central", "Térreo - Hall de Entrada", "ALTA"),
-                ("Cisco CP-8841", "00:1B:54:A1:10:02", "1002 - Posto de Enfermagem 2º Andar", "127.0.0.1", "BLOCO A - INTERNAÇÃO", "Posto de Enfermagem 1", "2º Andar - Ala Norte", "CRITICA"),
-                ("Cisco CP-3905", "00:1B:54:A1:10:03", "1003 - Quarto Isolamento 204", "192.168.10.15", "BLOCO A - INTERNAÇÃO", "Posto de Enfermagem 1", "2º Andar - Quarto 204", "NORMAL"),
-                
-                # Pronto Socorro (Crítico)
-                ("Cisco CP-8845", "00:1B:54:B2:20:01", "2001 - Triagem e Acolhimento PS", "127.0.0.1", "PRONTO SOCORRO", "Triagem e Classificação", "Portão PS 24h", "CRITICA"),
-                ("Cisco CP-8861", "00:1B:54:B2:20:02", "2002 - Sala Vermelha Emergência", "127.0.0.1", "PRONTO SOCORRO", "Sala de Emergência Vermelha", "Sala 01 - Ressuscitação", "CRITICA"),
-                ("Cisco CP-7821", "00:1B:54:B2:20:03", "2003 - Guichê Atendimento PS", "192.168.20.22", "PRONTO SOCORRO", "Recepção Central", "Balcão Atendimento", "ALTA"),
-
-                # UTI Geral (Crítico)
-                ("Cisco CP-8841", "00:1B:54:C3:30:01", "3001 - Posto Central UTI Geral", "127.0.0.1", "UTI GERAL", "Box UTI Leito 01 a 10", "3º Andar UTI", "CRITICA"),
-                ("Cisco CP-7821", "00:1B:54:C3:30:02", "3002 - Prescrição Médica UTI", "192.168.30.12", "UTI GERAL", "Box UTI Leito 01 a 10", "Ilha Médica 02", "CRITICA"),
-
-                # Centro Cirúrgico
-                ("Cisco CP-8845", "00:1B:54:D4:40:01", "4001 - Recepção Centro Cirúrgico", "127.0.0.1", "CENTRO CIRÚRGICO", "Recepção Central", "4º Andar Bloco Cirúrgico", "CRITICA"),
-                ("Cisco CP-7821", "00:1B:54:D4:40:02", "4002 - Sala de Recuperação Anestésica", "192.168.40.18", "CENTRO CIRÚRGICO", "Posto de Enfermagem 2", "RPA Sala 3", "ALTA"),
-
-                # Farmácia e Infra
-                ("Cisco CP-7821", "00:1B:54:E5:50:01", "5001 - Balcão Farmácia Central", "127.0.0.1", "FARMÁCIA CENTRAL", "Expedição Farmácia", "Subsolo Farmácia", "ALTA"),
-                ("Cisco CP-8861", "00:1B:54:F6:60:01", "6001 - NOC / Suporte Infra TI", "127.0.0.1", "BLOCO B - DIAGNÓSTICO", "Supervisão TI e Infra", "1º Andar Datacenter", "CRITICA"),
-                ("Cisco CP-3905", "", "6002 - Sala Técnica Sem IP", "", "BLOCO B - DIAGNÓSTICO", "Supervisão TI e Infra", "Rack 03", "NORMAL"),
+                ("Cisco CP-7841", "00:27:0D:A1:B2:C1", "Ramal 2001 - Recepção Central - Atendimento Geral", "192.168.10.11", "Bloco Central", "Recepção", "Térreo Hall Central", "NORMAL", "ONLINE", 10.0),
+                ("Cisco CP-8841", "00:27:0D:A1:B2:C2", "Ramal 2002 - Triagem Adulto - Emergência", "192.168.10.12", "Pronto Socorro", "Triagem", "Portão PS 24h", "CRITICA", "ONLINE", 15.0),
+                ("Cisco CP-3905", "00:27:0D:A1:B2:C3", "Ramal 2003 - Consultório 01 - Emergência Clínica", "192.168.10.13", "Pronto Socorro", "Consultórios", "Consultório 01", "ALTA", "ONLINE", 5.0),
+                ("Cisco CP-8845", "00:27:0D:A1:B2:C4", "Ramal 2010 - Posto de Enfermagem UTI Geral", "192.168.10.20", "UTI Geral", "Enfermagem", "3º Andar UTI", "CRITICA", "ONLINE", 23.0),
+                ("Cisco CP-7841", "00:27:0D:A1:B2:C5", "Ramal 2011 - Coordenação Médica UTI", "192.168.10.21", "UTI Geral", "Coordenação", "Ilha Médica 02", "CRITICA", "ONLINE", 10.0),
+                ("Cisco CP-7821", "00:27:0D:A1:B2:C6", "Ramal 2020 - Sala de Cirurgia 01 - Interfone", "192.168.10.30", "Centro Cirúrgico", "Salas Cirúrgicas", "Sala Cirúrgica 01", "CRITICA", "ONLINE", 14.0),
+                ("Cisco CP-7821", "00:27:0D:A1:B2:C7", "Ramal 2021 - Sala de Recuperação Anestésica (RPA)", "192.168.10.31", "Centro Cirúrgico", "RPA", "RPA Leito 03", "ALTA", "ONLINE", 11.0),
+                ("Cisco CP-3905", "00:27:0D:A1:B2:C8", "Ramal 2030 - Posto Maternidade 2º Andar", "192.168.10.40", "Maternidade", "Internação", "2º Andar Ala Maternidade", "NORMAL", "ONLINE", 18.0),
+                ("Cisco CP-7841", "00:27:0D:A1:B2:C9", "Ramal 2040 - Agendamento de Consultas - Ambulatório", "192.168.10.50", "Ambulatório", "Atendimento", "Balcão Agendamento", "NORMAL", "ONLINE", 22.0),
+                ("Cisco CP-8861", "00:27:0D:A1:B2:CA", "Ramal 2050 - TI - Central de Serviços e Telefonia", "192.168.10.60", "Administrativo", "Tecnologia da Informação", "1º Andar Datacenter NOC", "CRITICA", "ONLINE", 4.0),
+                ("Cisco CP-8845", "00:27:0D:A1:B2:CB", "Ramal 2051 - Diretoria Clínica HAOC", "192.168.10.61", "Administrativo", "Diretoria", "Gabinete Diretoria", "ALTA", "ONLINE", 8.0),
+                ("Cisco CP-7841", "00:27:0D:B1:C2:E1", "Ramal 2060 - Farmácia Central - Balcão 1", "192.168.10.80", "Bloco Central", "Farmácia", "Balcão 1 Farmácia", "ALTA", "ONLINE", 12.0),
+                ("Cisco CP-8845", "00:27:0D:B1:C2:E2", "Ramal 2061 - Centro de Diagnóstico por Imagem (CDI) - Tomografia", "192.168.10.81", "Bloco Central", "CDI", "Sala Tomografia", "ALTA", "ONLINE", 6.0),
             ]
 
-            for mod, mac, desc, ip, blk, setr, loc, crit in ramais_exemplo:
-                if not session.query(Ramal).filter(Ramal.descricao == desc).first():
-                    r = Ramal(
-                        modelo=mod,
-                        mac_cisco=mac or None,
-                        descricao=desc,
-                        ip=ip or None,
-                        bloco=blk,
-                        setor=setr,
-                        localizacao=loc,
-                        criticidade=crit,
-                        ativo=True,
-                    )
-                    session.add(r)
-            print(f"[+] {len(ramais_exemplo)} ramais VoIP demonstrativos cadastrados.")
+            # Limpar e recarregar para garantir sincronia
+            session.query(Ramal).delete()
+            for mod, mac, desc, ip, blk, setr, loc, crit, st, lat in ramais_exemplo:
+                r = Ramal(
+                    modelo=mod,
+                    mac_cisco=mac,
+                    descricao=desc,
+                    ip=ip,
+                    bloco=blk,
+                    setor=setr,
+                    localizacao=loc,
+                    criticidade=crit,
+                    status_atual=st,
+                    ultima_latencia=lat,
+                    ativo=True,
+                )
+                session.add(r)
+            print(f"[+] {len(ramais_exemplo)} ramais VoIP corporativos sincronizados.")
 
     print("=" * 65)
     print("Banco de dados configurado com sucesso!")

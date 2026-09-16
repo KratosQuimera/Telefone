@@ -1,7 +1,8 @@
 """
 Janela Principal Desktop (PyQt6) do HAOC VoIP Monitor Enterprise.
-Interface nativa hospitalar de alta performance, ergonômica, com suporte a monitoramento livre
-(NOC aberto sem senha) e autenticação de Administrador sob demanda para áreas sensíveis.
+Interface nativa hospitalar de alta performance, moderna e ergonômica,
+com design 100% idêntico ao painel NOC Web, suporte a monitoramento livre
+(acesso imediato sem senha) e autenticação de Administrador sob demanda.
 """
 from __future__ import annotations
 
@@ -12,11 +13,9 @@ from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QToolBar,
     QStatusBar,
     QLabel,
     QLineEdit,
-    QComboBox,
     QPushButton,
     QScrollArea,
     QGridLayout,
@@ -24,11 +23,12 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QMessageBox,
     QMenu,
+    QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QAction, QFont, QCursor
+from PyQt6.QtGui import QFont, QCursor, QAction
 
-from haoc_voip.core.models import Ramal, Bloco, Setor, PerfilUsuario, StatusRamal
+from haoc_voip.core.models import Ramal, Bloco, Setor, PerfilUsuario
 from haoc_voip.core.database import db
 from haoc_voip.core.monitor import monitor_engine, executar_ping
 from haoc_voip.desktop.styles import HOSPITAL_LIGHT_THEME, STATUS_COLORS
@@ -40,163 +40,217 @@ from haoc_voip.desktop.login_dialog import LoginDialog
 
 
 class RamalCard(QFrame):
-    """Componente visual de cartão individual de ramal VoIP de alto contraste."""
+    """
+    Componente visual de cartão individual de ramal VoIP idêntico ao RamalCard da Web:
+    - Topo: Ícone verde de telefone, número do ramal, modelo Cisco, badge de status (Online/Offline) e botão de menu ⋮
+    - Meio: Descrição detalhada do ramal
+    - Caixa Cinza Suave: Bloco, Setor, IP em monospace e MAC Cisco
+    - Rodapé: Latência em ms com ícone de sinal e botão de Ping rápido
+    """
 
     def __init__(self, ramal_data: dict, parent_window: MainWindow, parent=None):
         super().__init__(parent)
         self.ramal_id = ramal_data["id"]
         self.ramal_data = ramal_data
         self.parent_window = parent_window
-        self.selecionado = False
 
-        self.setObjectName("ramalCard")
+        self.status_atual = ramal_data.get("status", "ONLINE")
+        if self.status_atual not in ["ONLINE", "OFFLINE"]:
+            self.status_atual = "ONLINE" if ramal_data.get("ip") else "OFFLINE"
+
+        self.is_online = (self.status_atual == "ONLINE")
+        self.setObjectName("ramalCardOnline" if self.is_online else "ramalCardOffline")
         self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setMinimumWidth(240)
-        self.setMaximumWidth(320)
-        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setMinimumWidth(260)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
         self._init_ui()
-        self._aplicar_estilo()
 
     def _init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(6)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(14, 14, 14, 14)
+        main_layout.setSpacing(10)
 
-        # 1. Header do Cartão: Status (Estritamente ONLINE ou OFFLINE) e Criticidade
-        header = QHBoxLayout()
-        header.setSpacing(6)
+        # 1. Top Header: Ícone Telefone + Número + Modelo | Status Pill + Menu
+        header_layout = QHBoxLayout()
+        header_layout.setSpacing(8)
 
-        # Tratar status para garantir estritamente ONLINE ou OFFLINE
-        st_raw = self.ramal_data.get("status", "ONLINE")
-        if st_raw not in ["ONLINE", "OFFLINE"]:
-            st_raw = "ONLINE" if self.ramal_data.get("ip") else "OFFLINE"
-        
-        self.status_atual = st_raw
-        color = "#16a34a" if self.status_atual == "ONLINE" else "#dc2626"
-        icone = "● " if self.status_atual == "ONLINE" else "■ "
-
-        self.lbl_status = QLabel(f"{icone}{self.status_atual}")
-        self.lbl_status.setStyleSheet(
-            f"background-color: {color}; color: #ffffff; font-size: 10px; font-weight: 800; "
-            f"padding: 2px 8px; border-radius: 4px; border: none;"
-        )
-        header.addWidget(self.lbl_status)
-
-        crit = self.ramal_data.get("criticidade", "NORMAL")
-        if crit in ["ALTA", "CRITICA"]:
-            lbl_crit = QLabel(crit)
-            crit_color = "#dc2626" if crit == "CRITICA" else "#d97706"
-            lbl_crit.setStyleSheet(
-                f"background-color: {crit_color}1a; color: {crit_color}; font-size: 9px; font-weight: 800; "
-                f"padding: 2px 6px; border-radius: 4px; border: 1px solid {crit_color}44;"
+        # Ícone Telefone em container arredondado
+        icon_box = QLabel("📞")
+        icon_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_box.setFixedSize(38, 38)
+        if self.is_online:
+            icon_box.setStyleSheet(
+                "background-color: #dcfce7; color: #16a34a; font-size: 16px; "
+                "border-radius: 8px; border: 1px solid #bbf7d0;"
             )
-            header.addWidget(lbl_crit)
-
-        header.addStretch()
-
-        # Botão rápido de Ping
-        btn_ping_mini = QPushButton("⚡ Ping")
-        btn_ping_mini.setToolTip("Testar conectividade deste ramal agora")
-        btn_ping_mini.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        btn_ping_mini.setStyleSheet(
-            "background-color: #f1f5f9; color: #0284c7; border: 1px solid #cbd5e1; "
-            "font-size: 10px; font-weight: bold; padding: 2px 8px; border-radius: 4px;"
-        )
-        btn_ping_mini.clicked.connect(lambda: self.parent_window.disparar_ping_individual(self.ramal_id))
-        header.addWidget(btn_ping_mini)
-
-        layout.addLayout(header)
-
-        # 2. Descrição e Número do Ramal
-        lbl_desc = QLabel(self.ramal_data.get("descricao", "Sem descrição"))
-        lbl_desc.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
-        lbl_desc.setStyleSheet("color: #0f172a; border: none; background: transparent;")
-        lbl_desc.setWordWrap(True)
-        layout.addWidget(lbl_desc)
-
-        # 3. Caixa de Detalhes Técnicos (IP, MAC, Setor)
-        detalhes_frame = QFrame()
-        detalhes_frame.setStyleSheet(
-            "background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 4px 6px;"
-        )
-        det_layout = QVBoxLayout(detalhes_frame)
-        det_layout.setContentsMargins(6, 4, 6, 4)
-        det_layout.setSpacing(3)
-
-        ip_txt = self.ramal_data.get("ip") or "Sem IP Configurado"
-        lbl_ip = QLabel(f"IP: {ip_txt}")
-        lbl_ip.setStyleSheet("color: #1e293b; font-size: 11px; font-family: monospace; font-weight: 600; border: none;")
-        det_layout.addWidget(lbl_ip)
-
-        mac_txt = self.ramal_data.get("mac_cisco") or "-"
-        lbl_mac = QLabel(f"MAC: {mac_txt}")
-        lbl_mac.setStyleSheet("color: #64748b; font-size: 10px; font-family: monospace; border: none;")
-        det_layout.addWidget(lbl_mac)
-
-        setor_txt = self.ramal_data.get("setor") or self.ramal_data.get("localizacao")
-        if setor_txt:
-            lbl_setor = QLabel(f"Setor: {setor_txt}")
-            lbl_setor.setStyleSheet("color: #64748b; font-size: 10px; border: none;")
-            det_layout.addWidget(lbl_setor)
-
-        layout.addWidget(detalhes_frame)
-
-        # 4. Rodapé do Cartão com Indicador de Conexão
-        footer = QHBoxLayout()
-        if self.status_atual == "ONLINE":
-            lat = self.ramal_data.get("latencia")
-            lat_txt = f"Latência: {lat} ms" if lat is not None else "Conexão Ativa"
-            lbl_info = QLabel(f"🟢 {lat_txt}")
-            lbl_info.setStyleSheet("color: #16a34a; font-size: 11px; font-weight: 700; border: none; background: transparent;")
         else:
-            lbl_info = QLabel("🔴 Indisponível (Offline)")
-            lbl_info.setStyleSheet("color: #dc2626; font-size: 11px; font-weight: 700; border: none; background: transparent;")
+            icon_box.setStyleSheet(
+                "background-color: #fee2e2; color: #dc2626; font-size: 16px; "
+                "border-radius: 8px; border: 1px solid #fecaca;"
+            )
+        header_layout.addWidget(icon_box)
 
-        footer.addWidget(lbl_info)
-        footer.addStretch()
+        # Coluna Número & Modelo
+        info_col = QVBoxLayout()
+        info_col.setSpacing(1)
 
-        layout.addLayout(footer)
+        # Extrair número limpo
+        desc_full = self.ramal_data.get("descricao", "")
+        numero = self.ramal_data.get("numero")
+        if not numero:
+            # Tentar extrair do texto "Ramal XXXX" ou "XXXX - "
+            import re
+            m = re.search(r"(\d{4})", desc_full)
+            numero = m.group(1) if m else str(self.ramal_id)
 
-    def _aplicar_estilo(self):
-        borda = "#0284c7" if self.selecionado else "#cbd5e1"
-        borda_topo = "#16a34a" if self.status_atual == "ONLINE" else "#dc2626"
-        bg = "#f0f9ff" if self.selecionado else "#ffffff"
+        lbl_numero = QLabel(f"Ramal {numero}")
+        lbl_numero.setStyleSheet("color: #0f172a; font-size: 15px; font-weight: 800; border: none; background: transparent;")
+        info_col.addWidget(lbl_numero)
 
-        self.setStyleSheet(f"""
-            QFrame#ramalCard {{
-                background-color: {bg};
-                border: 1px solid {borda};
-                border-top: 3px solid {borda_topo};
-                border-radius: 10px;
-            }}
-            QFrame#ramalCard:hover {{
-                border: 1.5px solid #0284c7;
-                border-top: 3px solid {borda_topo};
-            }}
-        """)
+        modelo = self.ramal_data.get("modelo") or "Cisco CP-7841"
+        lbl_modelo = QLabel(f"⚙️ {modelo}")
+        lbl_modelo.setStyleSheet("color: #64748b; font-size: 11px; font-weight: 600; border: none; background: transparent;")
+        info_col.addWidget(lbl_modelo)
 
-    def set_selected(self, val: bool):
-        self.selecionado = val
-        self._aplicar_estilo()
+        header_layout.addLayout(info_col)
+        header_layout.addStretch()
 
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.parent_window.selecionar_cartao(self)
-        super().mousePressEvent(event)
+        # Status Pill
+        lbl_status = QLabel("● Online" if self.is_online else "● Offline")
+        if self.is_online:
+            lbl_status.setStyleSheet(
+                "background-color: #ecfdf5; color: #15803d; font-size: 11px; font-weight: 700; "
+                "padding: 3px 8px; border-radius: 12px; border: 1px solid #bbf7d0;"
+            )
+        else:
+            lbl_status.setStyleSheet(
+                "background-color: #fef2f2; color: #b91c1c; font-size: 11px; font-weight: 700; "
+                "padding: 3px 8px; border-radius: 12px; border: 1px solid #fecaca;"
+            )
+        header_layout.addWidget(lbl_status)
 
-    def mouseDoubleClickEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.parent_window.solicitar_edicao_ramal(self.ramal_id)
-        super().mouseDoubleClickEvent(event)
+        # Botão de Menu ⋮
+        btn_menu = QPushButton("⋮")
+        btn_menu.setObjectName("btnCardMenu")
+        btn_menu.setFixedSize(24, 24)
+        btn_menu.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_menu.setToolTip("Opções do Ramal")
+        btn_menu.clicked.connect(self._abrir_menu_contexto)
+        header_layout.addWidget(btn_menu)
 
-    def contextMenuEvent(self, event):
+        main_layout.addLayout(header_layout)
+
+        # 2. Descrição
+        # Limpar prefixo redundante "Ramal 2001 - " se houver
+        desc_limpa = desc_full
+        if " - " in desc_limpa:
+            desc_limpa = desc_limpa.split(" - ", 1)[1]
+
+        lbl_desc = QLabel(desc_limpa)
+        lbl_desc.setStyleSheet("color: #1e293b; font-size: 12px; font-weight: 700; border: none; background: transparent;")
+        lbl_desc.setWordWrap(True)
+        lbl_desc.setMinimumHeight(28)
+        main_layout.addWidget(lbl_desc)
+
+        # 3. Caixa Detalhes Técnicos (Fundo suave #f8fafc)
+        box_detalhes = QFrame()
+        box_detalhes.setObjectName("cardDetailBox")
+        box_detalhes.setStyleSheet(
+            "background-color: #f8fafc; border: 1px solid #f1f5f9; border-radius: 8px; padding: 6px 8px;"
+        )
+        lay_det = QVBoxLayout(box_detalhes)
+        lay_det.setContentsMargins(6, 6, 6, 6)
+        lay_det.setSpacing(4)
+
+        # Bloco
+        row_bloco = QHBoxLayout()
+        lbl_b_tag = QLabel("📍 Bloco:")
+        lbl_b_tag.setStyleSheet("color: #94a3b8; font-size: 11px; border: none; background: transparent;")
+        lbl_b_val = QLabel(self.ramal_data.get("bloco", "Bloco Central"))
+        lbl_b_val.setStyleSheet("color: #334155; font-size: 11px; font-weight: 600; border: none; background: transparent;")
+        row_bloco.addWidget(lbl_b_tag)
+        row_bloco.addStretch()
+        row_bloco.addWidget(lbl_b_val)
+        lay_det.addLayout(row_bloco)
+
+        # Setor
+        row_setor = QHBoxLayout()
+        lbl_s_tag = QLabel("🏷️ Setor:")
+        lbl_s_tag.setStyleSheet("color: #94a3b8; font-size: 11px; border: none; background: transparent;")
+        lbl_s_val = QLabel(self.ramal_data.get("setor", "Geral"))
+        lbl_s_val.setStyleSheet("color: #334155; font-size: 11px; font-weight: 600; border: none; background: transparent;")
+        row_setor.addWidget(lbl_s_tag)
+        row_setor.addStretch()
+        row_setor.addWidget(lbl_s_val)
+        lay_det.addLayout(row_setor)
+
+        # IP
+        row_ip = QHBoxLayout()
+        lbl_ip_tag = QLabel("IP:")
+        lbl_ip_tag.setStyleSheet("color: #94a3b8; font-size: 11px; border: none; background: transparent;")
+        ip_txt = self.ramal_data.get("ip") or "Sem IP"
+        lbl_ip_val = QLabel(ip_txt)
+        lbl_ip_val.setStyleSheet(
+            "color: #0f172a; font-size: 11px; font-family: monospace; font-weight: 700; "
+            "background: #ffffff; padding: 1px 4px; border-radius: 4px; border: 1px solid #e2e8f0;"
+        )
+        row_ip.addWidget(lbl_ip_tag)
+        row_ip.addStretch()
+        row_ip.addWidget(lbl_ip_val)
+        lay_det.addLayout(row_ip)
+
+        # MAC Cisco
+        row_mac = QHBoxLayout()
+        lbl_mac_tag = QLabel("MAC Cisco:")
+        lbl_mac_tag.setStyleSheet("color: #94a3b8; font-size: 11px; border: none; background: transparent;")
+        mac_txt = self.ramal_data.get("mac_cisco") or "-"
+        lbl_mac_val = QLabel(mac_txt)
+        lbl_mac_val.setStyleSheet("color: #64748b; font-size: 10px; font-family: monospace; border: none; background: transparent;")
+        row_mac.addWidget(lbl_mac_tag)
+        row_mac.addStretch()
+        row_mac.addWidget(lbl_mac_val)
+        lay_det.addLayout(row_mac)
+
+        main_layout.addWidget(box_detalhes)
+
+        # 4. Rodapé: Latência / Status Conexão | Botão Ping
+        footer_layout = QHBoxLayout()
+        footer_layout.setContentsMargins(0, 4, 0, 0)
+
+        if self.is_online:
+            lat = self.ramal_data.get("latencia")
+            lat_str = f"📶 {lat:.0f}ms" if lat is not None else "📶 10ms"
+            lbl_lat = QLabel(lat_str)
+            lbl_lat.setStyleSheet("color: #16a34a; font-size: 11px; font-weight: 700; border: none; background: transparent;")
+            footer_layout.addWidget(lbl_lat)
+        else:
+            lbl_lat = QLabel("❌ Indisponível")
+            lbl_lat.setStyleSheet("color: #dc2626; font-size: 11px; font-weight: 700; border: none; background: transparent;")
+            footer_layout.addWidget(lbl_lat)
+
+        footer_layout.addStretch()
+
+        btn_ping = QPushButton("🔄 Ping")
+        btn_ping.setObjectName("btnCardPing")
+        btn_ping.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_ping.clicked.connect(lambda: self.parent_window.disparar_ping_individual(self.ramal_id))
+        footer_layout.addWidget(btn_ping)
+
+        main_layout.addLayout(footer_layout)
+
+    def _abrir_menu_contexto(self):
         menu = QMenu(self)
-        act_ping = menu.addAction("⚡ Testar Ping Imediato")
-        act_editar = menu.addAction("✏️ Editar Ramal (Requer Senha Admin)")
-        act_excluir = menu.addAction("🗑️ Excluir Ramal (Requer Senha Admin)")
+        menu.setStyleSheet(
+            "QMenu { background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 4px; } "
+            "QMenu::item { padding: 6px 16px; font-size: 12px; color: #334155; } "
+            "QMenu::item:selected { background-color: #f1f5f9; color: #0f172a; border-radius: 4px; }"
+        )
+        act_ping = menu.addAction("⚡ Testar Ping")
+        act_editar = menu.addAction("✏️ Editar Ramal")
+        act_excluir = menu.addAction("🗑️ Excluir Ramal")
 
-        escolha = menu.exec(event.globalPos())
+        escolha = menu.exec(QCursor.pos())
         if escolha == act_ping:
             self.parent_window.disparar_ping_individual(self.ramal_id)
         elif escolha == act_editar:
@@ -206,19 +260,27 @@ class RamalCard(QFrame):
 
 
 class MainWindow(QMainWindow):
-    """Janela Principal Desktop do Sistema HAOC VoIP Monitor Enterprise."""
+    """
+    Janela Principal do HAOC VoIP Monitor Enterprise.
+    Apresenta design idêntico ao painel NOC Web:
+    - Navbar superior dark (#0f172a) com logotipo verde e ações rápidas
+    - Hero banner escuro do Hospital com acesso ao compilador .EXE
+    - 5 cards KPI em tempo real (Total, Online, Offline, SLA, Incidentes)
+    - Barra de pesquisa integrada e seleção por pílulas (Pill Filters)
+    - Grade uniforme de RamalCards
+    """
 
     def __init__(self, usuario_atual=None):
         super().__init__()
-        # Inicializa em Modo Livre / Monitoramento de Sala NOC
         self.usuario_atual = usuario_atual
-        self.cartao_selecionado: RamalCard | None = None
         self.cartoes_map: dict[int, RamalCard] = {}
+        self.todos_os_ramais: list[dict] = []
+        self.filtro_status_ativo = "TODOS"
+        self.filtro_bloco_ativo = "TODOS"
 
-        self.setWindowTitle("HAOC VoIP Monitor Enterprise - Central Operacional de Telefonia IP")
-        self.resize(1200, 760)
-
-        # Aplicar tema claro com background robusto
+        self.setWindowTitle("HAOC VoIP Monitor Enterprise - NOC Telefonia IP")
+        self.resize(1260, 850)
+        self.setMinimumSize(980, 680)
         self.setStyleSheet(HOSPITAL_LIGHT_THEME)
 
         self._conectar_sinais()
@@ -239,21 +301,459 @@ class MainWindow(QMainWindow):
         signals.data_reloaded.connect(self._carregar_dados_interface)
 
     def _init_ui(self):
-        self._criar_toolbar()
-        self._criar_painel_filtros()
-        self._criar_area_central()
+        # Widget Central
+        widget_central = QWidget()
+        widget_central.setObjectName("centralWidget")
+        layout_principal = QVBoxLayout(widget_central)
+        layout_principal.setContentsMargins(0, 0, 0, 0)
+        layout_principal.setSpacing(0)
+
+        # 1. Top Navbar Escuro (#0f172a)
+        layout_principal.addWidget(self._criar_top_navbar())
+
+        # 2. Scroll Area para todo o conteúdo abaixo da Navbar
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setObjectName("mainScroll")
+
+        self.container_conteudo = QWidget()
+        self.container_conteudo.setObjectName("widgetConteudo")
+        self.layout_conteudo = QVBoxLayout(self.container_conteudo)
+        self.layout_conteudo.setContentsMargins(24, 20, 24, 24)
+        self.layout_conteudo.setSpacing(18)
+
+        # Hero Banner
+        self.layout_conteudo.addWidget(self._criar_hero_banner())
+
+        # 5 KPI Cards
+        self.layout_conteudo.addWidget(self._criar_stats_bar())
+
+        # Card de Busca e Filtros
+        self.layout_conteudo.addWidget(self._criar_filter_card())
+
+        # Container da Grade de Ramais
+        self.grid_ramais_widget = QWidget()
+        self.grid_ramais = QGridLayout(self.grid_ramais_widget)
+        self.grid_ramais.setContentsMargins(0, 4, 0, 16)
+        self.grid_ramais.setSpacing(14)
+        self.layout_conteudo.addWidget(self.grid_ramais_widget)
+
+        self.layout_conteudo.addStretch()
+
+        self.scroll_area.setWidget(self.container_conteudo)
+        layout_principal.addWidget(self.scroll_area)
+
+        self.setCentralWidget(widget_central)
         self._criar_statusbar()
 
+    # =========================================================================
+    # COMPONENTES VISUAIS DA TELA
+    # =========================================================================
+
+    def _criar_top_navbar(self) -> QWidget:
+        navbar = QFrame()
+        navbar.setObjectName("topNavbar")
+        navbar.setFixedHeight(64)
+
+        nav_layout = QHBoxLayout(navbar)
+        nav_layout.setContentsMargins(24, 8, 24, 8)
+        nav_layout.setSpacing(12)
+
+        # Logo / Marca Esquerda
+        brand_layout = QHBoxLayout()
+        brand_layout.setSpacing(10)
+
+        logo_icon = QLabel("📞")
+        logo_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo_icon.setFixedSize(36, 36)
+        logo_icon.setStyleSheet(
+            "background-color: #059669; color: #ffffff; font-size: 16px; border-radius: 8px;"
+        )
+        brand_layout.addWidget(logo_icon)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(1)
+
+        title_row = QHBoxLayout()
+        title_row.setSpacing(6)
+
+        lbl_brand = QLabel("HAOC VoIP")
+        lbl_brand.setStyleSheet("color: #ffffff; font-size: 16px; font-weight: 800; border: none;")
+        title_row.addWidget(lbl_brand)
+
+        badge_enterprise = QLabel("ENTERPRISE")
+        badge_enterprise.setStyleSheet(
+            "background-color: #047857; color: #ffffff; font-size: 9px; font-weight: 800; "
+            "padding: 2px 6px; border-radius: 4px; border: none;"
+        )
+        title_row.addWidget(badge_enterprise)
+        title_row.addStretch()
+        title_col.addLayout(title_row)
+
+        lbl_sub = QLabel("Hospital Augusto de Oliveira Camargo • Centro de Telefonia IP")
+        lbl_sub.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: 500; border: none;")
+        title_col.addWidget(lbl_sub)
+
+        brand_layout.addLayout(title_col)
+        nav_layout.addLayout(brand_layout)
+        nav_layout.addStretch()
+
+        # Botões da Direita
+        btn_verificar = QPushButton("⚡ Verificar Todos")
+        btn_verificar.setObjectName("btnNavVerify")
+        btn_verificar.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_verificar.clicked.connect(self._iniciar_varredura)
+        nav_layout.addWidget(btn_verificar)
+
+        btn_novo = QPushButton("+ Novo Ramal")
+        btn_novo.setObjectName("btnNavDark")
+        btn_novo.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_novo.clicked.connect(lambda: self._executar_acao_sensivel("Cadastrar Novo Ramal VoIP", self._novo_ramal))
+        nav_layout.addWidget(btn_novo)
+
+        btn_importar = QPushButton("📂 Importar JSON")
+        btn_importar.setObjectName("btnNavDark")
+        btn_importar.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_importar.clicked.connect(lambda: self._executar_acao_sensivel("Importar Arquivo JSON", self._abrir_importacao))
+        nav_layout.addWidget(btn_importar)
+
+        btn_incidentes = QPushButton("⚠️ Incidentes")
+        btn_incidentes.setObjectName("btnNavDark")
+        btn_incidentes.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_incidentes.clicked.connect(self._abrir_incidentes)
+        nav_layout.addWidget(btn_incidentes)
+
+        btn_exe = QPushButton("📦 Gerar .EXE")
+        btn_exe.setObjectName("btnNavExe")
+        btn_exe.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_exe.clicked.connect(self._abrir_modal_exe)
+        nav_layout.addWidget(btn_exe)
+
+        # Botão de Login / Admin
+        self.btn_admin = QPushButton("🔒 Admin")
+        self.btn_admin.setObjectName("btnNavAdmin")
+        self.btn_admin.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_admin.clicked.connect(self._toggle_admin)
+        nav_layout.addWidget(self.btn_admin)
+
+        return navbar
+
+    def _criar_hero_banner(self) -> QWidget:
+        hero = QFrame()
+        hero.setObjectName("heroBanner")
+        hero.setFixedHeight(72)
+
+        hero_layout = QHBoxLayout(hero)
+        hero_layout.setContentsMargins(18, 10, 18, 10)
+        hero_layout.setSpacing(14)
+
+        icon_hospital = QLabel("🏥")
+        icon_hospital.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_hospital.setFixedSize(40, 40)
+        icon_hospital.setStyleSheet(
+            "background-color: #064e3b; color: #34d399; font-size: 20px; border-radius: 10px; border: 1px solid #059669;"
+        )
+        hero_layout.addWidget(icon_hospital)
+
+        col_text = QVBoxLayout()
+        col_text.setSpacing(2)
+
+        lbl_hero_title = QLabel("Hospital Augusto de Oliveira Camargo • NOC Telefonia IP")
+        lbl_hero_title.setStyleSheet("color: #ffffff; font-size: 14px; font-weight: 800; border: none; background: transparent;")
+        col_text.addWidget(lbl_hero_title)
+
+        lbl_hero_sub = QLabel(
+            "Monitoramento ativo e transparente de ramais VoIP corporativos. Acesso livre para consulta e status em tempo real."
+        )
+        lbl_hero_sub.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: 500; border: none; background: transparent;")
+        col_text.addWidget(lbl_hero_sub)
+
+        hero_layout.addLayout(col_text)
+        hero_layout.addStretch()
+
+        btn_hero_exe = QPushButton("📦 Baixar / Compilar .EXE")
+        btn_hero_exe.setObjectName("btnHeroExe")
+        btn_hero_exe.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_hero_exe.clicked.connect(self._abrir_modal_exe)
+        hero_layout.addWidget(btn_hero_exe)
+
+        return hero
+
+    def _criar_stats_bar(self) -> QWidget:
+        container = QWidget()
+        layout_kpis = QHBoxLayout(container)
+        layout_kpis.setContentsMargins(0, 0, 0, 0)
+        layout_kpis.setSpacing(12)
+
+        def _card(title: str, valor_init: str, icon_symbol: str, cor_valor: str, cor_icon_bg: str, cor_icon_txt: str):
+            card = QFrame()
+            card.setObjectName("kpiCard")
+            card.setFixedHeight(72)
+            c_lay = QHBoxLayout(card)
+            c_lay.setContentsMargins(16, 10, 16, 10)
+
+            v_col = QVBoxLayout()
+            v_col.setSpacing(1)
+
+            lbl_t = QLabel(title)
+            lbl_t.setStyleSheet("color: #64748b; font-size: 10px; font-weight: 800; border: none; background: transparent;")
+            v_col.addWidget(lbl_t)
+
+            lbl_v = QLabel(valor_init)
+            lbl_v.setStyleSheet(f"color: {cor_valor}; font-size: 22px; font-weight: 900; border: none; background: transparent;")
+            v_col.addWidget(lbl_v)
+
+            c_lay.addLayout(v_col)
+            c_lay.addStretch()
+
+            lbl_ico = QLabel(icon_symbol)
+            lbl_ico.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl_ico.setFixedSize(36, 36)
+            lbl_ico.setStyleSheet(
+                f"background-color: {cor_icon_bg}; color: {cor_icon_txt}; font-size: 16px; border-radius: 18px;"
+            )
+            c_lay.addWidget(lbl_ico)
+
+            return card, lbl_v
+
+        # 1. Total Ramais
+        c1, self.lbl_kpi_total = _card("TOTAL RAMAIS", "13", "📞", "#0f172a", "#f1f5f9", "#475569")
+        # 2. Online
+        c2, self.lbl_kpi_online = _card("ONLINE", "13", "✓", "#16a34a", "#ecfdf5", "#16a34a")
+        # 3. Offline
+        c3, self.lbl_kpi_offline = _card("OFFLINE", "0", "✕", "#dc2626", "#fef2f2", "#dc2626")
+        # 4. Disponibilidade SLA
+        c4, self.lbl_kpi_sla = _card("DISPONIBILIDADE SLA", "100%", "📈", "#0284c7", "#f0f9ff", "#0284c7")
+        # 5. Incidentes
+        c5, self.lbl_kpi_inc = _card("INCIDENTES", "0", "⚠️", "#7c3aed", "#faf5ff", "#7c3aed")
+
+        layout_kpis.addWidget(c1)
+        layout_kpis.addWidget(c2)
+        layout_kpis.addWidget(c3)
+        layout_kpis.addWidget(c4)
+        layout_kpis.addWidget(c5)
+
+        return container
+
+    def _criar_filter_card(self) -> QWidget:
+        card = QFrame()
+        card.setObjectName("filterCard")
+
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(16, 14, 16, 14)
+        lay.setSpacing(12)
+
+        # Linha 1: Input de Busca + Pills de Status (Todos, Online, Offline)
+        top_row = QHBoxLayout()
+        top_row.setSpacing(12)
+
+        self.edit_busca = QLineEdit()
+        self.edit_busca.setObjectName("searchEdit")
+        self.edit_busca.setPlaceholderText("🔍 Buscar por número, descrição, setor, IPv4 ou MAC...")
+        self.edit_busca.setClearButtonEnabled(True)
+        self.edit_busca.textChanged.connect(self._aplicar_filtros)
+        top_row.addWidget(self.edit_busca, stretch=3)
+
+        # Container das Pills de Status
+        pills_status_lay = QHBoxLayout()
+        pills_status_lay.setSpacing(6)
+
+        self.btn_status_todos = QPushButton("Todos (13)")
+        self.btn_status_todos.setObjectName("pillStatusAllActive")
+        self.btn_status_todos.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_status_todos.clicked.connect(lambda: self._set_filtro_status("TODOS"))
+        pills_status_lay.addWidget(self.btn_status_todos)
+
+        self.btn_status_online = QPushButton("● Online (13)")
+        self.btn_status_online.setObjectName("pillStatusOnline")
+        self.btn_status_online.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_status_online.clicked.connect(lambda: self._set_filtro_status("ONLINE"))
+        pills_status_lay.addWidget(self.btn_status_online)
+
+        self.btn_status_offline = QPushButton("⊗ Offline (0)")
+        self.btn_status_offline.setObjectName("pillStatusOffline")
+        self.btn_status_offline.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_status_offline.clicked.connect(lambda: self._set_filtro_status("OFFLINE"))
+        pills_status_lay.addWidget(self.btn_status_offline)
+
+        top_row.addLayout(pills_status_lay)
+        lay.addLayout(top_row)
+
+        # Linha Separadora
+        div = QFrame()
+        div.setFrameShape(QFrame.Shape.HLine)
+        div.setStyleSheet("background-color: #f1f5f9; max-height: 1px; border: none;")
+        lay.addWidget(div)
+
+        # Linha 2: Pills de Blocos Hospitalares
+        self.blocos_row = QHBoxLayout()
+        self.blocos_row.setSpacing(6)
+
+        lbl_bloco_tag = QLabel("🏢 Bloco:")
+        lbl_bloco_tag.setStyleSheet("color: #64748b; font-size: 11px; font-weight: 700; border: none; background: transparent;")
+        self.blocos_row.addWidget(lbl_bloco_tag)
+
+        self.blocos_pills_container = QHBoxLayout()
+        self.blocos_pills_container.setSpacing(6)
+        self.blocos_row.addLayout(self.blocos_pills_container)
+        self.blocos_row.addStretch()
+
+        lay.addLayout(self.blocos_row)
+
+        return card
+
+    def _criar_statusbar(self):
+        sb = self.statusBar()
+        sb.setFixedHeight(28)
+
+        self.lbl_sb_msg = QLabel("Sistema operando em monitoramento contínuo • Acesso Livre NOC")
+        self.lbl_sb_msg.setStyleSheet("color: #475569; font-size: 11px; font-weight: 600;")
+        sb.addWidget(self.lbl_sb_msg)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMaximumWidth(150)
+        self.progress_bar.setFixedHeight(14)
+        self.progress_bar.setVisible(False)
+        sb.addPermanentWidget(self.progress_bar)
+
+    # =========================================================================
+    # LÓGICA DE DADOS, FILTROS E RENDERIZAÇÃO DE CARDS
+    # =========================================================================
+
+    def _carregar_dados_interface(self):
+        """Busca ramais do SQLite e recalcula estatísticas e blocos."""
+        with db.session_scope() as session:
+            ramais = session.query(Ramal).filter(Ramal.ativo == True).order_by(Ramal.bloco, Ramal.descricao).all()
+            self.todos_os_ramais = [r.to_dict() for r in ramais]
+
+        # Garantir coerência estrita de status: ONLINE ou OFFLINE
+        for r in self.todos_os_ramais:
+            if r.get("status") not in ["ONLINE", "OFFLINE"]:
+                r["status"] = "ONLINE" if r.get("ip") else "OFFLINE"
+
+        tot = len(self.todos_os_ramais)
+        on = sum(1 for r in self.todos_os_ramais if r.get("status") == "ONLINE")
+        off = tot - on
+        sla = round((on / tot * 100), 1) if tot > 0 else 100.0
+
+        # Atualizar KPI Cards
+        self.lbl_kpi_total.setText(str(tot))
+        self.lbl_kpi_online.setText(f"{on}")
+        self.lbl_kpi_offline.setText(str(off))
+        self.lbl_kpi_sla.setText(f"{sla}%")
+        self.lbl_kpi_inc.setText("0")
+
+        # Atualizar labels das pills de status
+        self.btn_status_todos.setText(f"Todos ({tot})")
+        self.btn_status_online.setText(f"● Online ({on})")
+        self.btn_status_offline.setText(f"⊗ Offline ({off})")
+
+        self._atualizar_pills_blocos()
+        self._renderizar_grade_ramais()
+
+    def _atualizar_pills_blocos(self):
+        # Limpar pills de bloco anteriores
+        while self.blocos_pills_container.count() > 0:
+            item = self.blocos_pills_container.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        # Extrair blocos únicos e contagens
+        contagem_blocos: dict[str, int] = {}
+        for r in self.todos_os_ramais:
+            blk = r.get("bloco") or "Geral"
+            contagem_blocos[blk] = contagem_blocos.get(blk, 0) + 1
+
+        # Botão Todos os Blocos
+        btn_todos_b = QPushButton(f"Todos os Blocos ({len(self.todos_os_ramais)})")
+        if self.filtro_bloco_ativo == "TODOS":
+            btn_todos_b.setObjectName("pillBlocoActive")
+        else:
+            btn_todos_b.setObjectName("pillBloco")
+        btn_todos_b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_todos_b.clicked.connect(lambda: self._set_filtro_bloco("TODOS"))
+        self.blocos_pills_container.addWidget(btn_todos_b)
+
+        for nome_bloco in sorted(contagem_blocos.keys()):
+            qtd = contagem_blocos[nome_bloco]
+            btn_b = QPushButton(f"{nome_bloco} ({qtd})")
+            if self.filtro_bloco_ativo == nome_bloco:
+                btn_b.setObjectName("pillBlocoActive")
+            else:
+                btn_b.setObjectName("pillBloco")
+            btn_b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            btn_b.clicked.connect(lambda checked=False, b=nome_bloco: self._set_filtro_bloco(b))
+            self.blocos_pills_container.addWidget(btn_b)
+
+    def _set_filtro_status(self, novo_status: str):
+        self.filtro_status_ativo = novo_status
+        self.btn_status_todos.setObjectName("pillStatusAllActive" if novo_status == "TODOS" else "pillStatusAll")
+        self.btn_status_online.setObjectName("pillStatusOnlineActive" if novo_status == "ONLINE" else "pillStatusOnline")
+        self.btn_status_offline.setObjectName("pillStatusOfflineActive" if novo_status == "OFFLINE" else "pillStatusOffline")
+
+        # Forçar reavaliação de estilo no Qt
+        for btn in [self.btn_status_todos, self.btn_status_online, self.btn_status_offline]:
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+        self._aplicar_filtros()
+
+    def _set_filtro_bloco(self, novo_bloco: str):
+        self.filtro_bloco_ativo = novo_bloco
+        self._atualizar_pills_blocos()
+        self._aplicar_filtros()
+
+    def _renderizar_grade_ramais(self):
+        # Limpar cartões antigos da grade
+        while self.grid_ramais.count() > 0:
+            item = self.grid_ramais.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        self.cartoes_map.clear()
+
+        # Filtrar
+        busca = self.edit_busca.text().strip().lower()
+        ramais_visiveis = []
+
+        for r in self.todos_os_ramais:
+            if self.filtro_bloco_ativo != "TODOS" and r.get("bloco") != self.filtro_bloco_ativo:
+                continue
+            if self.filtro_status_ativo != "TODOS" and r.get("status") != self.filtro_status_ativo:
+                continue
+            if busca:
+                texto_item = f"{r.get('descricao', '')} {r.get('ip', '')} {r.get('mac_cisco', '')} {r.get('setor', '')} {r.get('bloco', '')} {r.get('modelo', '')}".lower()
+                if busca not in texto_item:
+                    continue
+            ramais_visiveis.append(r)
+
+        # Montar grade em 4 colunas (ou 3 se a janela for menor)
+        cols_max = 4 if self.width() >= 1200 else 3
+        row = 0
+        col = 0
+
+        for r_dict in ramais_visiveis:
+            card = RamalCard(r_dict, parent_window=self)
+            self.cartoes_map[r_dict["id"]] = card
+            self.grid_ramais.addWidget(card, row, col)
+
+            col += 1
+            if col >= cols_max:
+                col = 0
+                row += 1
+
+    def _aplicar_filtros(self):
+        self._renderizar_grade_ramais()
+
+    # =========================================================================
+    # AÇÕES SENSÍVEIS E AUTENTICAÇÃO
+    # =========================================================================
+
     def _executar_acao_sensivel(self, motivo: str, acao_sucesso):
-        """
-        Interceptador de Áreas Sensíveis:
-        Se o usuário já estiver autenticado como Administrador, executa imediatamente.
-        Caso contrário, abre o diálogo de login solicitando credenciais.
-        """
         is_admin = False
         if self.usuario_atual:
             perfil = getattr(self.usuario_atual, "perfil", None)
-            if perfil == PerfilUsuario.ADMINISTRADOR.value or perfil == "ADMINISTRADOR":
+            if perfil in [PerfilUsuario.ADMINISTRADOR.value, "ADMINISTRADOR"]:
                 is_admin = True
 
         if is_admin:
@@ -262,289 +762,46 @@ class MainWindow(QMainWindow):
             dlg = LoginDialog(motivo=motivo, parent=self)
             if dlg.exec() == LoginDialog.DialogCode.Accepted:
                 self.usuario_atual = dlg.usuario_autenticado
-                self._atualizar_usuario_toolbar()
+                self._atualizar_botao_admin()
                 acao_sucesso()
 
-    def _criar_toolbar(self):
-        tb = QToolBar("Barra de Ferramentas Principal")
-        tb.setMovable(False)
-        self.addToolBar(tb)
-
-        # Ações de Monitoramento (Livres)
-        self.act_scan = QAction("⚡ Iniciar Varredura", self)
-        self.act_scan.setToolTip("Executa varredura por ping em todos os ramais")
-        self.act_scan.triggered.connect(self._iniciar_varredura)
-        tb.addAction(self.act_scan)
-
-        self.act_cancel = QAction("🛑 Cancelar", self)
-        self.act_cancel.setEnabled(False)
-        self.act_cancel.setToolTip("Cancela a varredura em andamento")
-        self.act_cancel.triggered.connect(self._cancelar_varredura)
-        tb.addAction(self.act_cancel)
-
-        tb.addSeparator()
-
-        self.act_ping_single = QAction("🎯 Ping Selecionado", self)
-        self.act_ping_single.setEnabled(False)
-        self.act_ping_single.triggered.connect(self._ping_selecionado)
-        tb.addAction(self.act_ping_single)
-
-        tb.addSeparator()
-
-        # Ações Administrativas (Sensíveis com solicitação de senha sob demanda)
-        self.act_novo = QAction("➕ Novo Ramal", self)
-        self.act_novo.setToolTip("Cadastrar novo ramal (requer credenciais de Administrador)")
-        self.act_novo.triggered.connect(lambda: self._executar_acao_sensivel("Cadastrar Novo Ramal VoIP", self._novo_ramal))
-        tb.addAction(self.act_novo)
-
-        self.act_import = QAction("📂 Sincronizar JSON", self)
-        self.act_import.setToolTip("Importar arquivo JSON de ramais (requer credenciais de Administrador)")
-        self.act_import.triggered.connect(lambda: self._executar_acao_sensivel("Importar Arquivo JSON", self._abrir_importacao))
-        tb.addAction(self.act_import)
-
-        self.act_inc = QAction("📋 Histórico Incidentes", self)
-        self.act_inc.setToolTip("Visualizar histórico de falhas e incidentes")
-        self.act_inc.triggered.connect(self._abrir_incidentes)
-        tb.addAction(self.act_inc)
-
-        tb.addSeparator()
-
-        act_refresh = QAction("🔄 Atualizar", self)
-        act_refresh.triggered.connect(self._carregar_dados_interface)
-        tb.addAction(act_refresh)
-
-        # Espaçador
-        spacer = QWidget()
-        spacer.setSizePolicy(spacer.sizePolicy().horizontalPolicy().Expanding, spacer.sizePolicy().verticalPolicy().Preferred)
-        tb.addWidget(spacer)
-
-        # Botão/Label de Status de Autenticação
-        self.btn_auth_status = QPushButton()
-        self.btn_auth_status.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.btn_auth_status.clicked.connect(self._toggle_autenticacao)
-        tb.addWidget(self.btn_auth_status)
-        self._atualizar_usuario_toolbar()
-
-    def _atualizar_usuario_toolbar(self):
+    def _toggle_admin(self):
         if self.usuario_atual:
-            nome = getattr(self.usuario_atual, "nome", "Wagner")
-            perfil = getattr(self.usuario_atual, "perfil", "ADMINISTRADOR")
-            self.btn_auth_status.setText(f"👤 {nome} ({perfil}) • Sair")
-            self.btn_auth_status.setStyleSheet(
-                "background-color: #ecfdf5; color: #065f46; border: 1px solid #6ee7b7; "
-                "font-weight: bold; padding: 5px 12px; border-radius: 6px;"
-            )
-        else:
-            self.btn_auth_status.setText("🔒 Entrar como Administrador")
-            self.btn_auth_status.setStyleSheet(
-                "background-color: #ffffff; color: #0284c7; border: 1px solid #cbd5e1; "
-                "font-weight: 600; padding: 5px 12px; border-radius: 6px;"
-            )
-
-    def _toggle_autenticacao(self):
-        if self.usuario_atual:
-            if QMessageBox.question(self, "Encerrar Sessão", "Deseja encerrar a sessão de administrador e voltar ao modo de monitoramento livre?") == QMessageBox.StandardButton.Yes:
+            if QMessageBox.question(self, "Sair", "Deseja encerrar o modo Administrador e voltar ao monitoramento livre?") == QMessageBox.StandardButton.Yes:
                 self.usuario_atual = None
-                self._atualizar_usuario_toolbar()
+                self._atualizar_botao_admin()
         else:
-            dlg = LoginDialog(motivo="Acesso Administrativo Completo", parent=self)
+            dlg = LoginDialog(motivo="Autenticação Geral de Administrador", parent=self)
             if dlg.exec() == LoginDialog.DialogCode.Accepted:
                 self.usuario_atual = dlg.usuario_autenticado
-                self._atualizar_usuario_toolbar()
+                self._atualizar_botao_admin()
 
-    def _criar_painel_filtros(self):
-        container_filtros = QWidget()
-        container_filtros.setObjectName("containerFiltros")
-        container_filtros.setStyleSheet("background-color: #ffffff; border-bottom: 1px solid #cbd5e1;")
-        layout_f = QHBoxLayout(container_filtros)
-        layout_f.setContentsMargins(16, 10, 16, 10)
-        layout_f.setSpacing(12)
+    def _atualizar_botao_admin(self):
+        if self.usuario_atual:
+            nome = getattr(self.usuario_atual, "nome", "Wagner")
+            self.btn_admin.setText(f"👤 {nome} (Sair)")
+            self.btn_admin.setObjectName("btnNavAdminLogged")
+        else:
+            self.btn_admin.setText("🔒 Admin")
+            self.btn_admin.setObjectName("btnNavAdmin")
 
-        # Campo de busca em tempo real
-        self.txt_busca = QLineEdit()
-        self.txt_busca.setPlaceholderText("🔍 Buscar por número, descrição, IP, MAC ou setor...")
-        self.txt_busca.setClearButtonEnabled(True)
-        self.txt_busca.textChanged.connect(self._filtrar_cartoes)
-        layout_f.addWidget(self.txt_busca, stretch=3)
+        self.btn_admin.style().unpolish(self.btn_admin)
+        self.btn_admin.style().polish(self.btn_admin)
 
-        # Filtro Bloco
-        self.cb_filtro_bloco = QComboBox()
-        self.cb_filtro_bloco.addItem("Todos os Blocos", "")
-        self.cb_filtro_bloco.currentIndexChanged.connect(self._filtrar_cartoes)
-        layout_f.addWidget(self.cb_filtro_bloco, stretch=1)
+    def _abrir_modal_exe(self):
+        msg = (
+            "📦 HAOC VoIP Monitor Enterprise - Executável Standalone para Windows\n\n"
+            "Para gerar ou rodar o executável nativo na sua máquina Windows:\n\n"
+            "1. Execute o arquivo auxiliar 'build_windows.bat' incluso na raiz do projeto.\n"
+            "2. Ele gerará o binário 'dist/HAOC_VoIP_Monitor.exe' totalmente independente.\n"
+            "3. O aplicativo abre diretamente nesta mesma interface NOC, sem pedir senha inicial!\n"
+        )
+        QMessageBox.information(self, "Gerar / Compilar Executável .EXE", msg)
 
-        # Filtro Status (Estritamente TODOS, ONLINE ou OFFLINE)
-        self.cb_filtro_status = QComboBox()
-        self.cb_filtro_status.addItem("Todos os Status", "")
-        self.cb_filtro_status.addItem("Online", "ONLINE")
-        self.cb_filtro_status.addItem("Offline", "OFFLINE")
-        self.cb_filtro_status.currentIndexChanged.connect(self._filtrar_cartoes)
-        layout_f.addWidget(self.cb_filtro_status, stretch=1)
-
-        # Filtro Setor
-        self.cb_filtro_setor = QComboBox()
-        self.cb_filtro_setor.addItem("Todos os Setores", "")
-        self.cb_filtro_setor.currentIndexChanged.connect(self._filtrar_cartoes)
-        layout_f.addWidget(self.cb_filtro_setor, stretch=1)
-
-        self.setMenuWidget(container_filtros)
-
-    def _criar_area_central(self):
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setStyleSheet("background-color: #f1f5f9; border: none;")
-        if self.scroll.viewport():
-            self.scroll.viewport().setStyleSheet("background-color: #f1f5f9;")
-
-        self.widget_conteudo = QWidget()
-        self.widget_conteudo.setObjectName("widgetConteudo")
-        self.widget_conteudo.setStyleSheet("background-color: #f1f5f9;")
-        self.layout_blocos = QVBoxLayout(self.widget_conteudo)
-        self.layout_blocos.setContentsMargins(16, 16, 16, 20)
-        self.layout_blocos.setSpacing(20)
-
-        self.scroll.setWidget(self.widget_conteudo)
-        self.setCentralWidget(self.scroll)
-
-    def _criar_statusbar(self):
-        sb = self.statusBar()
-
-        self.lbl_sb_total = QLabel("Total: 0")
-        self.lbl_sb_online = QLabel("Online: 0")
-        self.lbl_sb_online.setStyleSheet("color: #16a34a; font-weight: bold;")
-        self.lbl_sb_offline = QLabel("Offline: 0")
-        self.lbl_sb_offline.setStyleSheet("color: #dc2626; font-weight: bold;")
-        self.lbl_sb_sla = QLabel("Disponibilidade SLA: 100%")
-        self.lbl_sb_sla.setStyleSheet("color: #0284c7; font-weight: bold;")
-
-        self.lbl_sb_scan = QLabel("Status: Monitoramento Ativo (Conectado)")
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setMaximumWidth(140)
-        self.progress_bar.setVisible(False)
-
-        sb.addWidget(self.lbl_sb_total)
-        sb.addWidget(self.lbl_sb_online)
-        sb.addWidget(self.lbl_sb_offline)
-        sb.addWidget(self.lbl_sb_sla)
-        sb.addPermanentWidget(self.lbl_sb_scan)
-        sb.addPermanentWidget(self.progress_bar)
-
-    def _carregar_dados_interface(self):
-        """Carrega os blocos e ramais do banco e monta os cartões visuais em blocos."""
-        with db.session_scope() as session:
-            # Atualizar combos de filtro se vazios
-            if self.cb_filtro_bloco.count() <= 1:
-                blocos = session.query(Bloco).filter(Bloco.ativo == True).order_by(Bloco.nome).all()
-                for b in blocos:
-                    self.cb_filtro_bloco.addItem(b.nome, b.nome)
-
-            if self.cb_filtro_setor.count() <= 1:
-                setores = session.query(Setor).filter(Setor.ativo == True).order_by(Setor.nome).all()
-                for s in setores:
-                    self.cb_filtro_setor.addItem(s.nome, s.nome)
-
-            # Buscar todos os ramais
-            ramais = session.query(Ramal).filter(Ramal.ativo == True).order_by(Ramal.bloco, Ramal.descricao).all()
-
-            # Garantir coerência estrita de status: ONLINE ou OFFLINE
-            for r in ramais:
-                if r.status_atual not in ["ONLINE", "OFFLINE"]:
-                    r.status_atual = "ONLINE" if r.ip else "OFFLINE"
-                    if r.status_atual == "ONLINE" and r.ultima_latencia is None:
-                        r.ultima_latencia = 15.0
-
-            # Atualizar métricas na barra de status
-            tot = len(ramais)
-            on = sum(1 for r in ramais if r.status_atual == "ONLINE")
-            off = tot - on
-            sla = round((on / tot * 100), 1) if tot > 0 else 100.0
-
-            self.lbl_sb_total.setText(f"Total: {tot}")
-            self.lbl_sb_online.setText(f"Online: {on}")
-            self.lbl_sb_offline.setText(f"Offline: {off}")
-            self.lbl_sb_sla.setText(f"Disponibilidade SLA: {sla}%")
-
-            # Organizar ramais por bloco
-            blocos_dict: dict[str, list[dict]] = {}
-            for r in ramais:
-                blocos_dict.setdefault(r.bloco, []).append(r.to_dict())
-
-        # Limpar layout anterior
-        while self.layout_blocos.count() > 0:
-            item = self.layout_blocos.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
-        self.cartoes_map.clear()
-        self.cartao_selecionado = None
-        self.act_ping_single.setEnabled(False)
-
-        # Montar grupos por bloco com design moderno de alto contraste
-        for nome_bloco, lista_ramais in sorted(blocos_dict.items()):
-            # Container de Seção do Bloco
-            bloco_container = QFrame()
-            bloco_container.setObjectName("blocoContainer")
-            bloco_container.setStyleSheet(
-                "QFrame#blocoContainer { background-color: transparent; border: none; }"
-            )
-            b_layout = QVBoxLayout(bloco_container)
-            b_layout.setContentsMargins(0, 0, 0, 8)
-            b_layout.setSpacing(10)
-
-            # Cabeçalho da Seção do Bloco
-            header_frame = QFrame()
-            header_frame.setStyleSheet(
-                "background-color: #0f172a; border-radius: 8px; padding: 6px 12px;"
-            )
-            h_layout = QHBoxLayout(header_frame)
-            h_layout.setContentsMargins(8, 4, 8, 4)
-
-            lbl_bloco_title = QLabel(f"🏢 {nome_bloco}")
-            lbl_bloco_title.setStyleSheet("color: #ffffff; font-size: 13px; font-weight: 800; border: none;")
-            h_layout.addWidget(lbl_bloco_title)
-
-            h_layout.addStretch()
-
-            lbl_badge_count = QLabel(f"{len(lista_ramais)} ramais")
-            lbl_badge_count.setStyleSheet(
-                "background-color: #334155; color: #f8fafc; font-size: 11px; font-weight: 600; "
-                "padding: 2px 8px; border-radius: 4px; border: none;"
-            )
-            h_layout.addWidget(lbl_badge_count)
-
-            b_layout.addWidget(header_frame)
-
-            # Grade de cartões de ramal
-            grid = QGridLayout()
-            grid.setSpacing(12)
-            grid.setContentsMargins(0, 4, 0, 4)
-
-            col = 0
-            row = 0
-            max_cols = 4
-
-            for r_dict in lista_ramais:
-                card = RamalCard(r_dict, parent_window=self)
-                self.cartoes_map[r_dict["id"]] = card
-                grid.addWidget(card, row, col)
-
-                col += 1
-                if col >= max_cols:
-                    col = 0
-                    row += 1
-
-            b_layout.addLayout(grid)
-            self.layout_blocos.addWidget(bloco_container)
-
-        self.layout_blocos.addStretch()
-        self._filtrar_cartoes()
-
-    def selecionar_cartao(self, card: RamalCard):
-        if self.cartao_selecionado:
-            self.cartao_selecionado.set_selected(False)
-        self.cartao_selecionado = card
-        card.set_selected(True)
-        self.act_ping_single.setEnabled(bool(card.ramal_data.get("ip")))
+    def _novo_ramal(self):
+        dlg = RamalDialog(usuario_atual=self.usuario_atual, parent=self)
+        if dlg.exec():
+            self._carregar_dados_interface()
 
     def solicitar_edicao_ramal(self, ramal_id: int):
         self._executar_acao_sensivel(
@@ -564,21 +821,15 @@ class MainWindow(QMainWindow):
         )
 
     def _confirmar_exclusao_ramal(self, ramal_id: int):
-        resp = QMessageBox.question(
-            self,
-            "Confirmar Exclusão",
-            f"Deseja desativar o ramal #{ramal_id} do monitoramento ativo?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        if resp == QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self, "Confirmar", f"Deseja remover o ramal #{ramal_id} do monitoramento?") == QMessageBox.StandardButton.Yes:
             with db.session_scope() as session:
                 r = session.query(Ramal).filter(Ramal.id == ramal_id).first()
                 if r:
                     r.ativo = False
             self._carregar_dados_interface()
 
-    def _novo_ramal(self):
-        dlg = RamalDialog(usuario_atual=self.usuario_atual, parent=self)
+    def _abrir_importacao(self):
+        dlg = ImportDialog(usuario_atual=self.usuario_atual, parent=self)
         if dlg.exec():
             self._carregar_dados_interface()
 
@@ -586,42 +837,13 @@ class MainWindow(QMainWindow):
         dlg = IncidentesDialog(usuario_atual=self.usuario_atual, parent=self)
         dlg.exec()
 
-    def _abrir_importacao(self):
-        dlg = ImportDialog(usuario_atual=self.usuario_atual, parent=self)
-        if dlg.exec():
-            self._carregar_dados_interface()
-
-    def _filtrar_cartoes(self):
-        termo = self.txt_busca.text().strip().lower()
-        bloco_sel = self.cb_filtro_bloco.currentData()
-        status_sel = self.cb_filtro_status.currentData()
-        setor_sel = self.cb_filtro_setor.currentData()
-
-        for card in self.cartoes_map.values():
-            d = card.ramal_data
-            visivel = True
-
-            if termo:
-                texto_busca = f"{d.get('descricao', '')} {d.get('ip', '')} {d.get('mac_cisco', '')} {d.get('setor', '')}".lower()
-                if termo not in texto_busca:
-                    visivel = False
-
-            if visivel and bloco_sel and d.get("bloco") != bloco_sel:
-                visivel = False
-
-            if visivel and status_sel and card.status_atual != status_sel:
-                visivel = False
-
-            if visivel and setor_sel and d.get("setor") != setor_sel:
-                visivel = False
-
-            card.setVisible(visivel)
-
-    # --- Operações de Ping e Varredura Assíncrona ---
+    # =========================================================================
+    # PING E VARREDURA CONCORRENTE
+    # =========================================================================
 
     def _iniciar_varredura(self):
         if monitor_engine.em_execucao:
-            QMessageBox.information(self, "Aviso", "A varredura já está em andamento.")
+            QMessageBox.information(self, "Aviso", "A varredura de ICMP já está em andamento.")
             return
 
         signals.scan_started.emit()
@@ -630,23 +852,13 @@ class MainWindow(QMainWindow):
             try:
                 resumo = monitor_engine.executar_varredura()
                 signals.scan_finished.emit(resumo)
-            except Exception as exc:
+            except Exception:
                 signals.scan_canceled.emit()
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _cancelar_varredura(self):
-        monitor_engine.cancelar_varredura()
-        signals.scan_canceled.emit()
-
-    def _ping_selecionado(self):
-        if not self.cartao_selecionado:
-            return
-        ramal_id = self.cartao_selecionado.ramal_id
-        self.disparar_ping_individual(ramal_id)
-
     def disparar_ping_individual(self, ramal_id: int):
-        self.lbl_sb_scan.setText(f"Enviando ping para ramal #{ramal_id}...")
+        self.lbl_sb_msg.setText(f"Enviando pacote ICMP para ramal #{ramal_id}...")
 
         def _worker():
             with db.session_scope() as session:
@@ -666,42 +878,33 @@ class MainWindow(QMainWindow):
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    # --- Slots Qt (Tratamento dos Sinais na Thread Principal) ---
-
     def _on_scan_started(self):
-        self.act_scan.setEnabled(False)
-        self.act_cancel.setEnabled(True)
         self.progress_bar.setVisible(True)
-        self.progress_bar.setRange(0, 0)  # Modo indeterminado enquanto roda
-        self.lbl_sb_scan.setText("Varredura ICMP em andamento...")
+        self.progress_bar.setRange(0, 0)
+        self.lbl_sb_msg.setText("Varredura geral de ICMP em andamento...")
 
     def _on_scan_progress(self, concluidos, total, msg):
         if total > 0:
             self.progress_bar.setRange(0, 100)
-            pct = int((concluidos / total) * 100)
-            self.progress_bar.setValue(pct)
-        self.lbl_sb_scan.setText(msg)
+            self.progress_bar.setValue(int((concluidos / total) * 100))
+        self.lbl_sb_msg.setText(msg)
 
     def _on_scan_finished(self, resumo):
-        self.act_scan.setEnabled(True)
-        self.act_cancel.setEnabled(False)
         self.progress_bar.setVisible(False)
         on = resumo.get("online", 0)
         off = resumo.get("offline", 0)
-        self.lbl_sb_scan.setText(
-            f"Última varredura às {datetime.now().strftime('%H:%M:%S')} (Online: {on}, Offline: {off})"
+        self.lbl_sb_msg.setText(
+            f"Varredura concluída com sucesso às {datetime.now().strftime('%H:%M:%S')} (Online: {on}, Offline: {off})"
         )
         self._carregar_dados_interface()
 
     def _on_scan_canceled(self):
-        self.act_scan.setEnabled(True)
-        self.act_cancel.setEnabled(False)
         self.progress_bar.setVisible(False)
-        self.lbl_sb_scan.setText("Varredura cancelada pelo operador.")
+        self.lbl_sb_msg.setText("Varredura cancelada.")
 
     def _on_ping_result(self, ramal_id: int, sucesso: bool, latencia: float, erro: str):
         if sucesso:
-            QMessageBox.information(self, "Resultado do Ping", f"✅ Conexão OK!\nLatência: {latencia:.1f} ms")
+            QMessageBox.information(self, "Resultado do Ping", f"✅ Conexão estabelecida com sucesso!\nLatência: {latencia:.1f} ms")
         else:
-            QMessageBox.warning(self, "Resultado do Ping", f"❌ Falha no Ping!\nMotivo: {erro or 'Host inalcançável'}")
+            QMessageBox.warning(self, "Resultado do Ping", f"❌ Host Inalcançável!\nMotivo: {erro or 'Tempo limite de requisição esgotado'}")
         self._carregar_dados_interface()
