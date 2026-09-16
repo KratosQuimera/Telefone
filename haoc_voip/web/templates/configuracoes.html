@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+
+{% block title %}Configurações do Sistema e Backups - HAOC VoIP Monitor{% endblock %}
+
+{% block content %}
+<div style="margin-bottom: 1.5rem;">
+  <h1 style="font-size: 1.5rem; font-weight: 800;">Parâmetros Operacionais e Backups</h1>
+  <p style="color: var(--text-muted); font-size: 0.875rem;">
+    Gerenciamento avançado de infraestrutura, rotinas de ping e persistência SQLite
+  </p>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+  
+  <!-- Formulário de Parâmetros de Monitoramento -->
+  <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 1.5rem; box-shadow: var(--shadow-sm);">
+    <h3 style="font-size: 1.15rem; font-weight: 700; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
+      ⚙️ Parâmetros do Motor de Varredura
+    </h3>
+
+    <form method="POST" action="{{ url_for('configuracoes.salvar') }}">
+      <div style="margin-bottom: 1rem;">
+        <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Nome da Instituição:</label>
+        <input type="text" name="hospital_name" class="input" style="width: 100%;" value="{{ configs.get('hospital_name', 'Hospital das Clínicas - HAOC') }}" />
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+        <div>
+          <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Timeout do Ping (s):</label>
+          <input type="number" step="0.1" min="0.5" max="10.0" name="ping_timeout" class="input" style="width: 100%;" value="{{ configs.get('ping_timeout', '1.5') }}" required />
+        </div>
+        <div>
+          <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Tentativas (Retries):</label>
+          <input type="number" min="1" max="5" name="ping_retries" class="input" style="width: 100%;" value="{{ configs.get('ping_retries', '2') }}" required />
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+        <div>
+          <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Intervalo de Varredura (s):</label>
+          <input type="number" min="10" max="600" name="scan_interval" class="input" style="width: 100%;" value="{{ configs.get('scan_interval', '60') }}" required />
+        </div>
+        <div>
+          <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Threads Simultâneas:</label>
+          <input type="number" min="5" max="100" name="max_threads" class="input" style="width: 100%;" value="{{ configs.get('max_threads', '25') }}" required />
+        </div>
+      </div>
+
+      <div style="margin-bottom: 1.5rem;">
+        <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Tempo Mínimo Offline para Alerta Crítico (s):</label>
+        <input type="number" min="30" max="1800" name="alert_min_offline" class="input" style="width: 100%;" value="{{ configs.get('alert_min_offline', '120') }}" required />
+      </div>
+
+      <button type="submit" class="btn btn-primary" style="width: 100%;">
+        Salvar Configurações
+      </button>
+    </form>
+  </div>
+
+  <!-- Gerenciamento de Backups e Snapshots -->
+  <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 1.5rem; box-shadow: var(--shadow-sm);">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
+      <h3 style="font-size: 1.15rem; font-weight: 700;">
+        💾 Backups e Snapshots SQLite
+      </h3>
+      <form method="POST" action="{{ url_for('configuracoes.criar_backup') }}">
+        <input type="hidden" name="motivo" value="manual_web" />
+        <button type="submit" class="btn btn-primary btn-sm">
+          ➕ Gerar Backup Agora
+        </button>
+      </form>
+    </div>
+
+    <p style="font-size: 0.825rem; color: var(--text-muted); margin-bottom: 1rem;">
+      Política ativa: retenção de até <strong>{{ max_backups }}</strong> cópias por <strong>{{ retention_days }}</strong> dias.
+      Backups automáticos são acionados antes de qualquer escrita, importação ou exclusão.
+    </p>
+
+    {% if backups %}
+    <div style="max-height: 320px; overflow-y: auto;">
+      <table class="table" style="font-size: 0.8rem;">
+        <thead>
+          <tr>
+            <th>Arquivo</th>
+            <th>Tamanho</th>
+            <th>Data</th>
+            <th style="text-align: right;">Ação</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for b in backups %}
+          <tr>
+            <td>
+              <code style="font-size: 0.75rem;">{{ b.nome }}</code>
+            </td>
+            <td>{{ (b.tamanho_bytes / 1024)|round(1) }} KB</td>
+            <td>{{ b.criado_em }}</td>
+            <td style="text-align: right;">
+              <button 
+                class="btn btn-secondary btn-sm" 
+                onclick="confirmarRestauracao('{{ b.nome }}')"
+              >
+                Restaurar
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div style="padding: 2rem; text-align: center; color: var(--text-muted); font-size: 0.85rem;">
+      Nenhum arquivo de backup gerado ainda.
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+
+<!-- Modal de Confirmação de Restauração -->
+<div id="modal-confirmar-restauracao" class="modal-overlay">
+  <div class="modal-box">
+    <h3 style="font-size: 1.2rem; font-weight: 700; color: var(--status-offline); margin-bottom: 1rem;">
+      ⚠️ Restaurar Banco de Dados
+    </h3>
+    <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 1rem;">
+      Você está prestes a restaurar a base a partir do snapshot selecionado.
+      Os dados atuais serão sobrescritos por esta versão (um backup de segurança do estado atual será criado previamente).
+    </p>
+    <form method="POST" action="{{ url_for('configuracoes.restaurar_backup') }}">
+      <input type="hidden" name="arquivo_backup" id="campo-arquivo-restaurar" />
+      <div style="background: var(--bg-tertiary); padding: 0.75rem; border-radius: var(--radius-md); font-size: 0.85rem; margin-bottom: 1.25rem;">
+        Arquivo alvo: <strong id="label-arquivo-restaurar"></strong>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-confirmar-restauracao')">Cancelar</button>
+        <button type="submit" class="btn btn-danger">Confirmar Restauração</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function confirmarRestauracao(arquivo) {
+  document.getElementById('campo-arquivo-restaurar').value = arquivo;
+  document.getElementById('label-arquivo-restaurar').textContent = arquivo;
+  openModal('modal-confirmar-restauracao');
+}
+</script>
+{% endblock %}

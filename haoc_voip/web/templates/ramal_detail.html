@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+
+{% block title %}Detalhes: {{ ramal.descricao }} - HAOC VoIP Monitor{% endblock %}
+
+{% block content %}
+<div style="margin-bottom: 1.5rem;">
+  <a href="{{ url_for('ramais.lista') }}" class="btn btn-secondary btn-sm" style="margin-bottom: 0.75rem;">
+    ← Voltar para Lista de Ramais
+  </a>
+  <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+    <div>
+      <h1 style="font-size: 1.5rem; font-weight: 800; display: flex; align-items: center; gap: 0.75rem;">
+        {{ ramal.descricao }}
+        <span class="badge status-{{ ramal.status|lower }}">{{ ramal.status }}</span>
+        <span class="badge {{ ramal.criticidade|lower }}">{{ ramal.criticidade }}</span>
+      </h1>
+      <p style="color: var(--text-muted); font-size: 0.875rem;">
+        Bloco: <strong>{{ ramal.bloco }}</strong> &bull; Setor: <strong>{{ ramal.setor or 'Não especificado' }}</strong>
+      </p>
+    </div>
+
+    {% if current_user.is_analista and ramal.ip %}
+    <button class="btn btn-primary" onclick="pingIndividual({{ ramal.id }}, '{{ ramal.ip }}')">
+      ⚡ Testar Conexão (Ping)
+    </button>
+    {% endif %}
+  </div>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+  <!-- Cartão de Edição de Dados -->
+  <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 1.5rem; box-shadow: var(--shadow-sm);">
+    <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
+      Editar Informações Cadastrais
+    </h3>
+
+    {% if current_user.is_analista %}
+    <form method="POST" action="{{ url_for('ramais.editar', ramal_id=ramal.id) }}">
+      
+      {% if current_user.is_admin %}
+      <div style="margin-bottom: 1rem;">
+        <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Descrição:</label>
+        <input type="text" name="descricao" class="input" style="width: 100%;" value="{{ ramal.descricao }}" required />
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+        <div>
+          <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Bloco:</label>
+          <select name="bloco" class="select" style="width: 100%;">
+            {% for b in blocos %}
+              <option value="{{ b.nome }}" {% if b.nome == ramal.bloco %}selected{% endif %}>{{ b.nome }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Setor:</label>
+          <select name="setor" class="select" style="width: 100%;">
+            <option value="">Sem Setor</option>
+            {% for s in setores %}
+              <option value="{{ s.nome }}" {% if s.nome == ramal.setor %}selected{% endif %}>{{ s.nome }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      {% endif %}
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+        <div>
+          <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Endereço IP:</label>
+          <input type="text" name="ip" class="input" style="width: 100%;" value="{{ ramal.ip or '' }}" placeholder="192.168.x.x" />
+        </div>
+        <div>
+          <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">MAC Cisco:</label>
+          <input type="text" name="mac_cisco" class="input" style="width: 100%;" value="{{ ramal.mac_cisco or '' }}" placeholder="00:1B:54:xx:xx:xx" />
+        </div>
+      </div>
+
+      {% if current_user.is_admin %}
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+        <div>
+          <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Modelo:</label>
+          <input type="text" name="modelo" class="input" style="width: 100%;" value="{{ ramal.modelo }}" />
+        </div>
+        <div>
+          <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Criticidade:</label>
+          <select name="criticidade" class="select" style="width: 100%;">
+            <option value="NORMAL" {% if ramal.criticidade == 'NORMAL' %}selected{% endif %}>NORMAL</option>
+            <option value="ALTA" {% if ramal.criticidade == 'ALTA' %}selected{% endif %}>ALTA</option>
+            <option value="CRITICA" {% if ramal.criticidade == 'CRITICA' %}selected{% endif %}>CRÍTICA</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 1rem;">
+        <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Localização Física:</label>
+        <input type="text" name="localizacao" class="input" style="width: 100%;" value="{{ ramal.localizacao or '' }}" />
+      </div>
+      {% endif %}
+
+      <div style="margin-bottom: 1.25rem;">
+        <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Observações / Anotações do Suporte:</label>
+        <textarea name="observacoes" class="input" style="width: 100%; height: 75px;">{{ ramal.observacoes or '' }}</textarea>
+      </div>
+
+      <button type="submit" class="btn btn-primary" style="width: 100%;">
+        Salvar Alterações
+      </button>
+    </form>
+    {% else %}
+    <p style="color: var(--text-muted); font-size: 0.9rem;">
+      Seu perfil de Visualização permite apenas consulta dos dados cadastrais.
+    </p>
+    {% endif %}
+
+    {% if current_user.is_admin %}
+    <div style="margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--border-color); display: flex; justify-content: space-between; gap: 0.75rem;">
+      <form method="POST" action="{{ url_for('ramais.toggle_ativo', ramal_id=ramal.id) }}" style="flex: 1;">
+        <button type="submit" class="btn btn-secondary" style="width: 100%;">
+          {% if ramal.ativo %}Desativar Ramal{% else %}Reativar Ramal{% endif %}
+        </button>
+      </form>
+
+      <button type="button" class="btn btn-danger" onclick="openModal('modal-excluir-ramal')">
+        Excluir Ramal
+      </button>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Painel de Métricas e Telemetria Recente -->
+  <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+    <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 1.5rem; box-shadow: var(--shadow-sm);">
+      <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
+        Status de Conectividade
+      </h3>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div>
+          <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Latência Atual</div>
+          <div style="font-size: 1.4rem; font-weight: 800; color: var(--color-brand);">
+            {% if ramal.latencia_ms is not none %}{{ ramal.latencia_ms }} ms{% else %}-{% endif %}
+          </div>
+        </div>
+        <div>
+          <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Última Verificação</div>
+          <div style="font-size: 0.95rem; font-weight: 700; margin-top: 0.35rem;">
+            {{ ramal.ultima_verificacao or 'Aguardando varredura' }}
+          </div>
+        </div>
+        <div>
+          <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Quedas Consecutivas</div>
+          <div style="font-size: 1.4rem; font-weight: 800; color: {% if ramal.falhas_consecutivas > 0 %}var(--status-offline){% else %}var(--status-online){% endif %};">
+            {{ ramal.falhas_consecutivas }}
+          </div>
+        </div>
+        <div>
+          <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Tempo Offline</div>
+          <div style="font-size: 0.95rem; font-weight: 700; margin-top: 0.35rem; color: var(--status-offline);">
+            {% if ramal.status == 'OFFLINE' %}{{ ramal.duracao_offline_formatada }}{% else %}Online / Normal{% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Histórico de Últimas Verificações de Latência -->
+    <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 1.5rem; box-shadow: var(--shadow-sm); flex: 1;">
+      <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.75rem;">
+        Últimas Leituras de Latência
+      </h3>
+      {% if monitoramentos %}
+      <div style="display: flex; align-items: flex-end; gap: 4px; height: 100px; padding-top: 1rem; border-bottom: 1px solid var(--border-color);">
+        {% for m in monitoramentos|reverse %}
+          {% set bar_height = (m.latencia_ms / 50 * 100)|round if m.latencia_ms else 5 %}
+          {% if bar_height > 100 %}{% set bar_height = 100 %}{% endif %}
+          <div 
+            title="{{ m.verificado_em }}: {% if m.status == 'ONLINE' %}{{ m.latencia_ms }}ms{% else %}FALHA{% endif %}"
+            style="flex: 1; height: {{ bar_height }}%; background: {% if m.status == 'ONLINE' %}var(--color-brand){% else %}var(--status-offline){% endif %}; border-radius: 2px 2px 0 0;"
+          ></div>
+        {% endfor %}
+      </div>
+      <div style="display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--text-muted); margin-top: 0.25rem;">
+        <span>Antigas</span>
+        <span>Mais recentes ➔</span>
+      </div>
+      {% else %}
+      <p style="color: var(--text-muted); font-size: 0.85rem;">Nenhuma leitura registrada para este ramal ainda.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Tabela de Incidentes deste Ramal -->
+<div style="margin-top: 2rem;">
+  <h2 style="font-size: 1.25rem; font-weight: 700; margin-bottom: 1rem;">
+    Histórico de Quedas e Incidentes deste Ramal
+  </h2>
+
+  {% if incidentes %}
+  <div class="table-responsive">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Início da Queda</th>
+          <th>Retorno</th>
+          <th>Duração Total</th>
+          <th>Status</th>
+          <th>Causa Apurada</th>
+          <th>Observação do Analista</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for inc in incidentes %}
+        <tr>
+          <td>{{ inc.iniciado_em }}</td>
+          <td>{{ inc.encerrado_em or 'Ainda indisponível' }}</td>
+          <td>
+            <strong style="color: {% if inc.aberto %}var(--status-offline){% else %}var(--text-primary){% endif %};">
+              {{ inc.duracao_formatada }}
+            </strong>
+          </td>
+          <td>
+            {% if inc.aberto %}
+              <span class="badge status-offline">ABERTO</span>
+            {% else %}
+              <span class="badge status-online">RESOLVIDO</span>
+            {% endif %}
+          </td>
+          <td>{{ inc.causa or '-' }}</td>
+          <td>{{ inc.observacao or '-' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div style="background: var(--bg-secondary); border: 1px dashed var(--border-color); border-radius: var(--radius-lg); padding: 2rem; text-align: center; color: var(--text-muted);">
+    ✅ Excelente! Nenhum incidente de queda registrado para este ramal.
+  </div>
+  {% endif %}
+</div>
+
+<!-- Modal de Exclusão Definitiva (Admin) -->
+{% if current_user.is_admin %}
+<div id="modal-excluir-ramal" class="modal-overlay">
+  <div class="modal-box">
+    <h3 style="font-size: 1.2rem; font-weight: 700; color: var(--status-offline); margin-bottom: 1rem;">
+      ⚠️ Confirmação de Exclusão Definitiva
+    </h3>
+    <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 1rem;">
+      Você está prestes a excluir permanentemente o ramal <strong>{{ ramal.descricao }}</strong>.
+      Esta ação removerá o ramal do banco e será registrada na trilha de auditoria.
+    </p>
+    <form method="POST" action="{{ url_for('ramais.excluir', ramal_id=ramal.id) }}">
+      <div style="margin-bottom: 1.25rem;">
+        <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">
+          Para confirmar, digite exatamente a palavra <code>EXCLUIR</code>:
+        </label>
+        <input type="text" name="confirmacao" class="input" style="width: 100%;" required placeholder="EXCLUIR" />
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-excluir-ramal')">Cancelar</button>
+        <button type="submit" class="btn btn-danger">Confirmar Exclusão</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function pingIndividual(ramalId, ip) {
+  try {
+    window.showToast(`Enviando ping para ${ip}...`, 'info');
+    const res = await fetch(`/api/ramais/${ramalId}/ping`, { method: 'POST' });
+    const data = await res.json();
+    if (data.sucesso) {
+      window.showToast(`Ping OK para ${ip}: ${data.latencia} ms`, 'success');
+      setTimeout(() => window.location.reload(), 1200);
+    } else {
+      window.showToast(`Falha no Ping para ${ip}: ${data.erro || 'Inalcançável'}`, 'danger');
+    }
+  } catch (e) {
+    window.showToast('Erro ao disparar ping.', 'danger');
+  }
+}
+</script>
+{% endblock %}

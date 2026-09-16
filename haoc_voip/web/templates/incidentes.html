@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+
+{% block title %}Incidentes e Indisponibilidades - HAOC VoIP Monitor{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+  <div>
+    <h1 style="font-size: 1.5rem; font-weight: 800;">Histórico Operacional de Incidentes</h1>
+    <p style="color: var(--text-muted); font-size: 0.875rem;">
+      Registro cronológico de falhas de comunicação e análise de causa raiz
+    </p>
+  </div>
+
+  <div style="display: flex; gap: 0.5rem;">
+    <a href="{{ url_for('incidentes.exportar_csv') }}" class="btn btn-secondary btn-sm">
+      📄 Exportar CSV
+    </a>
+    <a href="{{ url_for('incidentes.exportar_excel') }}" class="btn btn-secondary btn-sm">
+      📊 Exportar Excel
+    </a>
+  </div>
+</div>
+
+<!-- Filtros de Incidentes -->
+<form method="GET" action="{{ url_for('incidentes.lista') }}" class="toolbar">
+  <div class="toolbar-group">
+    <select name="bloco" class="select">
+      <option value="">Todos os Blocos</option>
+      {% for b in blocos %}
+        <option value="{{ b.nome }}" {% if filtros.bloco == b.nome %}selected{% endif %}>{{ b.nome }}</option>
+      {% endfor %}
+    </select>
+
+    <select name="status" class="select">
+      <option value="">Todos os Status</option>
+      <option value="aberto" {% if filtros.status == 'aberto' %}selected{% endif %}>Apenas Abertos (Em Queda)</option>
+      <option value="encerrado" {% if filtros.status == 'encerrado' %}selected{% endif %}>Apenas Resolvidos</option>
+    </select>
+
+    <select name="criticidade" class="select">
+      <option value="">Todas as Criticidades</option>
+      <option value="CRITICA" {% if filtros.criticidade == 'CRITICA' %}selected{% endif %}>Crítica</option>
+      <option value="ALTA" {% if filtros.criticidade == 'ALTA' %}selected{% endif %}>Alta</option>
+      <option value="NORMAL" {% if filtros.criticidade == 'NORMAL' %}selected{% endif %}>Normal</option>
+    </select>
+  </div>
+
+  <div class="toolbar-group">
+    <label style="font-size: 0.8rem; color: var(--text-muted);">De:</label>
+    <input type="date" name="data_inicio" class="input" value="{{ filtros.data_inicio or '' }}" />
+
+    <label style="font-size: 0.8rem; color: var(--text-muted);">Até:</label>
+    <input type="date" name="data_fim" class="input" value="{{ filtros.data_fim or '' }}" />
+
+    <button type="submit" class="btn btn-primary btn-sm">Filtrar</button>
+    <a href="{{ url_for('incidentes.lista') }}" class="btn btn-secondary btn-sm">Limpar</a>
+  </div>
+</form>
+
+<!-- Tabela de Incidentes -->
+<div class="table-responsive">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Ramal / Identificação</th>
+        <th>Bloco</th>
+        <th>IP / MAC</th>
+        <th>Início da Queda</th>
+        <th>Retorno</th>
+        <th>Duração</th>
+        <th>Status</th>
+        <th>Causa / Observação</th>
+        {% if current_user.is_analista %}
+        <th style="text-align: right;">Ação</th>
+        {% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for inc in incidentes %}
+      <tr>
+        <td>#{{ inc.id }}</td>
+        <td>
+          <a href="{{ url_for('ramais.detalhe', ramal_id=inc.ramal_id) }}" style="font-weight: 700; color: var(--text-primary); text-decoration: none;">
+            {{ inc.ramal_descricao }}
+          </a>
+        </td>
+        <td>{{ inc.bloco }}</td>
+        <td>
+          <div>{{ inc.ip_monitorado or '-' }}</div>
+          <div style="font-size: 0.75rem; color: var(--text-muted);">{{ inc.mac_cisco or '-' }}</div>
+        </td>
+        <td>{{ inc.iniciado_em }}</td>
+        <td>{{ inc.encerrado_em or 'Ainda em queda' }}</td>
+        <td>
+          <strong style="color: {% if inc.aberto %}var(--status-offline){% else %}var(--text-primary){% endif %};">
+            {{ inc.duracao_formatada }}
+          </strong>
+        </td>
+        <td>
+          {% if inc.aberto %}
+            <span class="badge status-offline">EM QUEDA</span>
+          {% else %}
+            <span class="badge status-online">RESOLVIDO</span>
+          {% endif %}
+        </td>
+        <td>
+          <div><strong>{{ inc.causa or 'Não informada' }}</strong></div>
+          {% if inc.observacao %}
+            <div style="font-size: 0.75rem; color: var(--text-muted);">{{ inc.observacao }}</div>
+          {% endif %}
+        </td>
+        {% if current_user.is_analista %}
+        <td style="text-align: right;">
+          <button 
+            class="btn btn-secondary btn-sm" 
+            onclick="abrirModalObservacao({{ inc.id }}, '{{ inc.causa|escape }}', '{{ inc.observacao|escape }}')"
+          >
+            Anotar
+          </button>
+        </td>
+        {% endif %}
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="10" style="text-align: center; padding: 2.5rem; color: var(--text-muted);">
+          Nenhum incidente encontrado para os filtros selecionados.
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Modal para Analista Registrar Causa / Observação -->
+<div id="modal-observacao-incidente" class="modal-overlay">
+  <div class="modal-box">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+      <h3 style="font-size: 1.15rem; font-weight: 700;" id="modal-titulo-incidente">
+        Anotações do Analista - Incidente
+      </h3>
+      <button class="btn btn-secondary btn-sm" onclick="closeModal('modal-observacao-incidente')">✕</button>
+    </div>
+
+    <form id="form-observacao-incidente" method="POST">
+      <div style="margin-bottom: 1rem;">
+        <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Causa Apurada:</label>
+        <select name="causa" id="campo-causa-incidente" class="select" style="width: 100%;">
+          <option value="Indisponibilidade de rede local (Switch)">Indisponibilidade de rede local (Switch)</option>
+          <option value="Aparelho VoIP desconectado ou sem energia">Aparelho VoIP desconectado ou sem energia</option>
+          <option value="Cabo de rede rompido ou defeituoso">Cabo de rede rompido ou defeituoso</option>
+          <option value="Conflito de endereço IP">Conflito de endereço IP</option>
+          <option value="Manutenção preventiva programada">Manutenção preventiva programada</option>
+          <option value="Falha do PBX / CallManager">Falha do PBX / CallManager</option>
+          <option value="Outro motivo operacional">Outro motivo operacional</option>
+        </select>
+      </div>
+
+      <div style="margin-bottom: 1.25rem;">
+        <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Observações / Laudo do Suporte:</label>
+        <textarea name="observacao" id="campo-obs-incidente" class="input" style="width: 100%; height: 90px;" placeholder="Descreva os procedimentos realizados pelo analista..."></textarea>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-observacao-incidente')">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Salvar Anotação</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function abrirModalObservacao(id, causa, obs) {
+  document.getElementById('modal-titulo-incidente').textContent = `Anotações do Analista - Incidente #${id}`;
+  document.getElementById('form-observacao-incidente').action = `/incidentes/${id}/observacao`;
+  if (causa) document.getElementById('campo-causa-incidente').value = causa;
+  document.getElementById('campo-obs-incidente').value = obs || '';
+  openModal('modal-observacao-incidente');
+}
+</script>
+{% endblock %}

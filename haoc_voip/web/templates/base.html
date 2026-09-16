@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}HAOC VoIP Monitor Enterprise{% endblock %} - Hospital das Clínicas</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  {% block extra_css %}{% endblock %}
+</head>
+<body>
+
+  <!-- Top Navbar Corporativa -->
+  <header class="navbar">
+    <a href="{{ url_for('dashboard.index') }}" class="brand-container">
+      <span class="brand-badge">HAOC TI</span>
+      <div>
+        <span class="brand-title">VoIP Monitor Enterprise</span>
+        <span class="brand-sub">Hospital Augusto de Oliveira Camargo</span>
+      </div>
+    </a>
+
+    {% if session.get('usuario_id') %}
+    <nav class="nav-links">
+      <a href="{{ url_for('dashboard.index') }}" class="nav-item {% if request.endpoint and 'dashboard' in request.endpoint %}active{% endif %}">
+        📊 Dashboard
+      </a>
+      <a href="{{ url_for('ramais.lista') }}" class="nav-item {% if request.endpoint and 'ramais' in request.endpoint %}active{% endif %}">
+        ☎️ Ramais
+      </a>
+      <a href="{{ url_for('incidentes.lista') }}" class="nav-item {% if request.endpoint and 'incidentes' in request.endpoint %}active{% endif %}">
+        ⚠️ Incidentes
+      </a>
+      <a href="{{ url_for('importacao.index') }}" class="nav-item {% if request.endpoint and 'importacao' in request.endpoint %}active{% endif %}">
+        🔄 Importação JSON
+      </a>
+      <a href="{{ url_for('relatorios.index') }}" class="nav-item {% if request.endpoint and 'relatorios' in request.endpoint %}active{% endif %}">
+        📈 Relatórios & SLA
+      </a>
+
+      {% if current_user.is_admin %}
+      <a href="{{ url_for('configuracoes.index') }}" class="nav-item {% if request.endpoint and 'configuracoes' in request.endpoint %}active{% endif %}">
+        ⚙️ Configurações
+      </a>
+      <a href="{{ url_for('usuarios.lista') }}" class="nav-item {% if request.endpoint and 'usuarios' in request.endpoint %}active{% endif %}">
+        👥 Usuários
+      </a>
+      <a href="{{ url_for('auditoria.index') }}" class="nav-item {% if request.endpoint and 'auditoria' in request.endpoint %}active{% endif %}">
+        🛡️ Auditoria
+      </a>
+      {% endif %}
+    </nav>
+    {% endif %}
+
+    <div class="nav-actions">
+      <!-- Indicador de status do motor em tempo real -->
+      <div style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: var(--text-muted);">
+        <span class="pulse-dot online" id="scan-pulse-dot"></span>
+        <span id="scan-engine-status">Monitorando</span>
+      </div>
+
+      <!-- Alternador Tema Claro/Escuro -->
+      <button id="theme-toggle-btn" class="btn btn-secondary btn-sm" title="Alternar tema de cores" style="padding: 0.35rem 0.6rem;">
+        <span id="theme-icon">🌙</span>
+      </button>
+
+      {% if session.get('usuario_id') %}
+      <div style="display: flex; align-items: center; gap: 0.6rem; border-left: 1px solid var(--border-color); padding-left: 0.75rem;">
+        <div style="text-align: right;">
+          <div style="font-size: 0.85rem; font-weight: 600;">{{ session.get('usuario_nome') }}</div>
+          <div style="font-size: 0.7rem; color: var(--color-brand); font-weight: 700; text-transform: uppercase;">{{ session.get('perfil') }}</div>
+        </div>
+        <a href="{{ url_for('auth.logout') }}" class="btn btn-secondary btn-sm" title="Encerrar sessão">
+          Sair
+        </a>
+      </div>
+      {% endif %}
+    </div>
+  </header>
+
+  <!-- Container de Toasts flutuantes -->
+  <div id="toast-container" style="position: fixed; top: 4.5rem; right: 1.5rem; z-index: 999; max-width: 380px;"></div>
+
+  <!-- Mensagens Flash -->
+  <div class="container" style="padding-bottom: 0; padding-top: 1rem;">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category }} alert-auto-dismiss">
+            {{ message }}
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+  </div>
+
+  <!-- Conteúdo Principal -->
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- Rodapé Institucional -->
+  <footer class="footer">
+    <div>
+      <strong>HAOC VoIP Monitor Enterprise</strong> &bull; Departamento de Tecnologia da Informação
+    </div>
+    <div>
+      Versão 2.5 Enterprise &bull; SQLite WAL Mode &bull; {{ now_year }} &copy; HAOC
+    </div>
+  </footer>
+
+  <script src="{{ url_for('static', filename='js/common.js') }}"></script>
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}Trilha de Auditoria Corporativa - HAOC VoIP Monitor{% endblock %}
+
+{% block content %}
+<div style="margin-bottom: 1.5rem;">
+  <h1 style="font-size: 1.5rem; font-weight: 800;">Trilha de Auditoria e Conformidade</h1>
+  <p style="color: var(--text-muted); font-size: 0.875rem;">
+    Registro imutável de todas as ações administrativas, alterações de rede e operações de segurança
+  </p>
+</div>
+
+<!-- Filtros de Auditoria -->
+<form method="GET" action="{{ url_for('auditoria.index') }}" class="toolbar">
+  <div class="toolbar-group">
+    <input 
+      type="text" 
+      name="acao" 
+      class="input" 
+      placeholder="Filtrar por ação (ex: LOGIN, CRIAR_RAMAL...)" 
+      value="{{ filtro_acao or '' }}"
+      style="min-width: 250px;"
+    />
+
+    <input 
+      type="text" 
+      name="entidade" 
+      class="input" 
+      placeholder="Entidade (ex: ramal, usuario...)" 
+      value="{{ filtro_entidade or '' }}"
+    />
+
+    <button type="submit" class="btn btn-primary btn-sm">Filtrar</button>
+    <a href="{{ url_for('auditoria.index') }}" class="btn btn-secondary btn-sm">Limpar</a>
+  </div>
+
+  <div style="font-size: 0.85rem; color: var(--text-muted);">
+    Últimos 200 eventos auditados
+  </div>
+</form>
+
+<!-- Tabela de Auditoria -->
+<div class="table-responsive">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Data / Hora</th>
+        <th>Operador</th>
+        <th>Ação Realizada</th>
+        <th>Entidade</th>
+        <th>Detalhes da Operação</th>
+        <th>IP Origem</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in registros %}
+      <tr>
+        <td style="white-space: nowrap;">{{ r.criado_em }}</td>
+        <td>
+          <strong>{{ r.usuario_nome or 'Sistema Automático' }}</strong>
+        </td>
+        <td>
+          <code style="font-weight: 700; color: var(--color-brand);">{{ r.acao }}</code>
+        </td>
+        <td>
+          <span class="badge" style="background: var(--bg-tertiary); color: var(--text-secondary);">
+            {{ r.entidade }} #{{ r.entidade_id or '-' }}
+          </span>
+        </td>
+        <td style="font-size: 0.8rem; max-width: 400px; word-break: break-all;">
+          {% if r.detalhes %}
+            <pre style="background: var(--bg-tertiary); padding: 0.35rem 0.5rem; border-radius: 4px; overflow-x: auto;">{{ r.detalhes }}</pre>
+          {% else %}
+            -
+          {% endif %}
+        </td>
+        <td><code>{{ r.ip_origem or 'local' }}</code></td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="6" style="text-align: center; padding: 2.5rem; color: var(--text-muted);">
+          Nenhum registro de auditoria encontrado.
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

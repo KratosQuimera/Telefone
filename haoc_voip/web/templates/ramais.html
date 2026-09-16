@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+
+{% block title %}Cadastro de Ramais VoIP - HAOC VoIP Monitor{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+  <div>
+    <h1 style="font-size: 1.5rem; font-weight: 800;">Gerenciamento de Ramais Cisco</h1>
+    <p style="color: var(--text-muted); font-size: 0.875rem;">
+      Cadastro institucional, endereçamento IP/MAC e parametrização física hospitalar
+    </p>
+  </div>
+
+  <div style="display: flex; gap: 0.5rem;">
+    {% if current_user.is_admin %}
+    <button class="btn btn-primary" onclick="openModal('modal-novo-ramal')">
+      ➕ Novo Ramal
+    </button>
+    {% endif %}
+    <a href="{{ url_for('importacao.exportar') }}" class="btn btn-secondary">
+      ⬇️ Exportar JSON
+    </a>
+  </div>
+</div>
+
+<!-- Filtro rápido na página -->
+<div class="toolbar">
+  <div class="toolbar-group" style="flex: 1;">
+    <input 
+      type="text" 
+      id="tabela-busca" 
+      class="input" 
+      placeholder="Filtrar nesta lista por ramal, IP, MAC ou setor..."
+      style="width: 100%; max-width: 400px;"
+      onkeyup="filtrarTabela()"
+    />
+  </div>
+  <div style="font-size: 0.85rem; color: var(--text-muted);" id="contador-tabela">
+    Total: {{ ramais|length }} ramais cadastrados
+  </div>
+</div>
+
+<!-- Tabela de Ramais -->
+<div class="table-responsive">
+  <table class="table" id="tabela-ramais">
+    <thead>
+      <tr>
+        <th>Descrição</th>
+        <th>Bloco</th>
+        <th>Setor</th>
+        <th>Endereço IP</th>
+        <th>MAC Cisco</th>
+        <th>Modelo</th>
+        <th>Criticidade</th>
+        <th>Status</th>
+        <th style="text-align: right;">Ações</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in ramais %}
+      <tr>
+        <td>
+          <a href="{{ url_for('ramais.detalhe', ramal_id=r.id) }}" style="font-weight: 700; color: var(--text-primary); text-decoration: none;">
+            {{ r.descricao }}
+          </a>
+        </td>
+        <td>{{ r.bloco }}</td>
+        <td>{{ r.setor or '-' }}</td>
+        <td>
+          {% if r.ip %}
+            <code style="background: var(--bg-tertiary); padding: 0.2rem 0.4rem; border-radius: 4px;">{{ r.ip }}</code>
+          {% else %}
+            <span style="color: var(--text-muted); font-style: italic;">Não atribuído</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if r.mac_cisco %}
+            <code style="background: var(--bg-tertiary); padding: 0.2rem 0.4rem; border-radius: 4px;">{{ r.mac_cisco }}</code>
+          {% else %}
+            -
+          {% endif %}
+        </td>
+        <td>{{ r.modelo }}</td>
+        <td>
+          <span class="badge {{ r.criticidade|lower }}">{{ r.criticidade }}</span>
+        </td>
+        <td>
+          <span class="badge status-{{ r.status|lower }}">{{ r.status }}</span>
+        </td>
+        <td style="text-align: right; white-space: nowrap;">
+          <a href="{{ url_for('ramais.detalhe', ramal_id=r.id) }}" class="btn btn-secondary btn-sm">
+            Editar / Detalhes
+          </a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Modal de Cadastro de Novo Ramal (Admin) -->
+{% if current_user.is_admin %}
+<div id="modal-novo-ramal" class="modal-overlay">
+  <div class="modal-box">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
+      <h3 style="font-size: 1.2rem; font-weight: 700;">Cadastrar Novo Ramal VoIP</h3>
+      <button class="btn btn-secondary btn-sm" onclick="closeModal('modal-novo-ramal')">✕</button>
+    </div>
+
+    <form method="POST" action="{{ url_for('ramais.criar') }}">
+      <div style="margin-bottom: 1rem;">
+        <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Descrição / Identificação *: </label>
+        <input type="text" name="descricao" class="input" style="width: 100%;" placeholder="Ex: 1001 - Balcão Recepção" required />
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+        <div>
+          <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Bloco Hospitalar *: </label>
+          <select name="bloco" class="select" style="width: 100%;" required>
+            <option value="">Selecione o Bloco</option>
+            {% for b in blocos %}
+              <option value="{{ b.nome }}">{{ b.nome }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div>
+          <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Setor: </label>
+          <select name="setor" class="select" style="width: 100%;">
+            <option value="">Selecione o Setor</option>
+            {% for s in setores %}
+              <option value="{{ s.nome }}">{{ s.nome }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+        <div>
+          <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Endereço IPv4: </label>
+          <input type="text" name="ip" class="input" style="width: 100%;" placeholder="Ex: 192.168.10.25" />
+        </div>
+
+        <div>
+          <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">MAC Address Cisco: </label>
+          <input type="text" name="mac_cisco" class="input" style="width: 100%;" placeholder="Ex: 00:1B:54:12:34:56" />
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+        <div>
+          <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Modelo Cisco: </label>
+          <input type="text" name="modelo" class="input" style="width: 100%;" value="Cisco CP-7821" />
+        </div>
+
+        <div>
+          <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Criticidade Operacional: </label>
+          <select name="criticidade" class="select" style="width: 100%;">
+            <option value="NORMAL">NORMAL</option>
+            <option value="ALTA">ALTA</option>
+            <option value="CRITICA">CRÍTICA (Leitos/UTI/PS)</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 1rem;">
+        <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Localização Física: </label>
+        <input type="text" name="localizacao" class="input" style="width: 100%;" placeholder="Ex: 2º Andar - Sala de Emergência" />
+      </div>
+
+      <div style="margin-bottom: 1.5rem;">
+        <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Observações Técnicas: </label>
+        <textarea name="observacoes" class="input" style="width: 100%; height: 70px;" placeholder="Pontos de rede, switch associado, etc."></textarea>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-novo-ramal')">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Salvar Ramal</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function filtrarTabela() {
+  const query = document.getElementById('tabela-busca').value.toLowerCase();
+  const rows = document.querySelectorAll('#tabela-ramais tbody tr');
+  let visiveis = 0;
+
+  rows.forEach(r => {
+    const text = r.textContent.toLowerCase();
+    if (text.includes(query)) {
+      r.style.display = '';
+      visiveis++;
+    } else {
+      r.style.display = 'none';
+    }
+  });
+
+  document.getElementById('contador-tabela').textContent = `Exibindo ${visiveis} de ${rows.length} ramais`;
+}
+</script>
+{% endblock %}

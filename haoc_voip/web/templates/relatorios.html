@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}Relatórios Gerenciais e SLA - HAOC VoIP Monitor{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+  <div>
+    <h1 style="font-size: 1.5rem; font-weight: 800;">Relatório de Disponibilidade e SLA</h1>
+    <p style="color: var(--text-muted); font-size: 0.875rem;">
+      Métricas operacionais consolidadas e análise de confiabilidade por bloco hospitalar
+    </p>
+  </div>
+
+  <div style="display: flex; gap: 0.5rem; align-items: center;">
+    <form method="GET" action="{{ url_for('relatorios.index') }}" style="display: flex; gap: 0.5rem;">
+      <select name="dias" class="select" onchange="this.form.submit()">
+        <option value="7" {% if periodo_dias == 7 %}selected{% endif %}>Últimos 7 dias</option>
+        <option value="15" {% if periodo_dias == 15 %}selected{% endif %}>Últimos 15 dias</option>
+        <option value="30" {% if periodo_dias == 30 %}selected{% endif %}>Últimos 30 dias</option>
+        <option value="90" {% if periodo_dias == 90 %}selected{% endif %}>Últimos 90 dias</option>
+      </select>
+    </form>
+
+    <a href="{{ url_for('relatorios.exportar_sla_csv', dias=periodo_dias) }}" class="btn btn-secondary btn-sm">
+      📄 Exportar SLA (CSV)
+    </a>
+  </div>
+</div>
+
+<!-- Resumo dos Indicadores -->
+<div class="metrics-grid">
+  <div class="metric-card">
+    <div class="label">Período de Análise</div>
+    <div class="value">{{ periodo_dias }} dias</div>
+  </div>
+  <div class="metric-card offline">
+    <div class="label">Total de Quedas</div>
+    <div class="value">{{ total_incidentes }}</div>
+  </div>
+  <div class="metric-card">
+    <div class="label">Tempo Total Indisponível</div>
+    <div class="value" style="font-size: 1.3rem;">{{ tempo_total_off_formatado }}</div>
+  </div>
+</div>
+
+<!-- Disponibilidade por Bloco -->
+<div style="margin-bottom: 2rem;">
+  <h2 style="font-size: 1.25rem; font-weight: 700; margin-bottom: 1rem;">
+    Disponibilidade por Bloco Hospitalar
+  </h2>
+
+  <div class="table-responsive">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Bloco</th>
+          <th>Total Ramais</th>
+          <th>Online</th>
+          <th>Offline</th>
+          <th>Disponibilidade (SLA)</th>
+          <th>Quedas no Período</th>
+          <th>Tempo Total Offline</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in relatorio_blocos %}
+        <tr>
+          <td><strong>{{ b.bloco }}</strong></td>
+          <td>{{ b.total_ramais }}</td>
+          <td><span style="color: var(--status-online); font-weight: 700;">{{ b.online }}</span></td>
+          <td><span style="color: var(--status-offline); font-weight: 700;">{{ b.offline }}</span></td>
+          <td>
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+              <div style="flex: 1; max-width: 120px; background: var(--bg-tertiary); height: 8px; border-radius: 4px; overflow: hidden;">
+                <div style="width: {{ b.disponibilidade_atual }}%; background: {% if b.disponibilidade_atual >= 99.0 %}var(--status-online){% elif b.disponibilidade_atual >= 95.0 %}var(--status-aguardando){% else %}var(--status-offline){% endif %}; height: 100%;"></div>
+              </div>
+              <strong>{{ b.disponibilidade_atual }}%</strong>
+            </div>
+          </td>
+          <td>{{ b.quedas_periodo }}</td>
+          <td>{{ b.tempo_total_offline_formatado }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Ranking de Ramais com Maior Quantidade de Quedas -->
+<div>
+  <h2 style="font-size: 1.25rem; font-weight: 700; margin-bottom: 1rem;">
+    Top 10 Ramais com Maior Histórico de Falhas
+  </h2>
+
+  {% if ranking %}
+  <div class="table-responsive">
+    <table class="table">
+      <thead>
+        <tr>
+          <th style="width: 50px;">Pos.</th>
+          <th>Ramal / Descrição</th>
+          <th>Bloco</th>
+          <th>Endereço IP</th>
+          <th>Criticidade</th>
+          <th>Quedas</th>
+          <th>Tempo Total Offline</th>
+          <th style="text-align: right;">Ação</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in ranking %}
+        <tr>
+          <td><strong>#{{ loop.index }}</strong></td>
+          <td>
+            <a href="{{ url_for('ramais.detalhe', ramal_id=item.id) }}" style="font-weight: 700; color: var(--text-primary); text-decoration: none;">
+              {{ item.descricao }}
+            </a>
+          </td>
+          <td>{{ item.bloco }}</td>
+          <td><code>{{ item.ip or '-' }}</code></td>
+          <td><span class="badge {{ item.criticidade|lower }}">{{ item.criticidade }}</span></td>
+          <td><strong style="color: var(--status-offline);">{{ item.quedas }} queda(s)</strong></td>
+          <td>{{ item.tempo_off_formatado }}</td>
+          <td style="text-align: right;">
+            <a href="{{ url_for('ramais.detalhe', ramal_id=item.id) }}" class="btn btn-secondary btn-sm">
+              Ver Histórico
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div style="background: var(--bg-secondary); border: 1px dashed var(--border-color); border-radius: var(--radius-lg); padding: 2rem; text-align: center; color: var(--text-muted);">
+    Nenhum registro de incidente no período de {{ periodo_dias }} dias.
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

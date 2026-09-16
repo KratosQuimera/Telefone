@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block title %}Página Não Encontrada - HAOC VoIP Monitor{% endblock %}
+
+{% block content %}
+<div style="text-align: center; padding: 4rem 1rem;">
+  <div style="font-size: 4rem; font-weight: 800; color: var(--color-brand); margin-bottom: 0.5rem;">404</div>
+  <h1 style="font-size: 1.5rem; font-weight: 700; margin-bottom: 1rem;">Página Não Encontrada</h1>
+  <p style="color: var(--text-muted); max-width: 500px; margin: 0 auto 2rem auto;">
+    O recurso solicitado não foi localizado no servidor ou você não possui autorização para acessá-lo.
+  </p>
+  <a href="{{ url_for('dashboard.index') }}" class="btn btn-primary">
+    Voltar para o Dashboard
+  </a>
+</div>
+{% endblock %}

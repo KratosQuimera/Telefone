@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+
+{% block title %}Gerenciamento de Usuários - HAOC VoIP Monitor{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+  <div>
+    <h1 style="font-size: 1.5rem; font-weight: 800;">Controle de Acesso e Usuários (RBAC)</h1>
+    <p style="color: var(--text-muted); font-size: 0.875rem;">
+      Gerenciamento de perfis de operadores e segurança de credenciais
+    </p>
+  </div>
+
+  <button class="btn btn-primary" onclick="openModal('modal-novo-usuario')">
+    ➕ Novo Usuário
+  </button>
+</div>
+
+<!-- Tabela de Usuários -->
+<div class="table-responsive">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Nome</th>
+        <th>Login</th>
+        <th>Perfil de Acesso</th>
+        <th>Status</th>
+        <th>Último Login</th>
+        <th>Segurança</th>
+        <th style="text-align: right;">Ações</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in usuarios %}
+      <tr>
+        <td><strong>{{ u.nome }}</strong></td>
+        <td><code>{{ u.login }}</code></td>
+        <td>
+          <span class="badge" style="background: var(--bg-tertiary); color: var(--text-primary);">
+            {{ u.perfil }}
+          </span>
+        </td>
+        <td>
+          {% if u.ativo %}
+            <span class="badge status-online">ATIVO</span>
+          {% else %}
+            <span class="badge status-inativo">INATIVO</span>
+          {% endif %}
+        </td>
+        <td>{{ u.ultimo_login or 'Nunca acessou' }}</td>
+        <td>
+          {% if u.bloqueado_ate %}
+            <span style="color: var(--status-offline); font-size: 0.8rem; font-weight: 600;">
+              🔒 Bloqueado temporariamente
+            </span>
+          {% else %}
+            <span style="color: var(--status-online); font-size: 0.8rem;">Regular</span>
+          {% endif %}
+        </td>
+        <td style="text-align: right; white-space: nowrap;">
+          <button 
+            class="btn btn-secondary btn-sm" 
+            onclick="abrirModalSenha({{ u.id }}, '{{ u.login }}')"
+          >
+            Redefinir Senha
+          </button>
+          
+          {% if u.id != session.get('usuario_id') %}
+          <form method="POST" action="{{ url_for('usuarios.toggle_ativo', user_id=u.id) }}" style="display: inline-block;">
+            <button type="submit" class="btn btn-secondary btn-sm">
+              {% if u.ativo %}Desativar{% else %}Reativar{% endif %}
+            </button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Modal Novo Usuário -->
+<div id="modal-novo-usuario" class="modal-overlay">
+  <div class="modal-box">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
+      <h3 style="font-size: 1.2rem; font-weight: 700;">Cadastrar Novo Operador</h3>
+      <button class="btn btn-secondary btn-sm" onclick="closeModal('modal-novo-usuario')">✕</button>
+    </div>
+
+    <form method="POST" action="{{ url_for('usuarios.criar') }}">
+      <div style="margin-bottom: 1rem;">
+        <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Nome Completo:</label>
+        <input type="text" name="nome" class="input" style="width: 100%;" placeholder="Ex: Carlos Andrade" required />
+      </div>
+
+      <div style="margin-bottom: 1rem;">
+        <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Login de Acesso:</label>
+        <input type="text" name="login" class="input" style="width: 100%;" placeholder="Ex: candrade" required />
+      </div>
+
+      <div style="margin-bottom: 1rem;">
+        <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Perfil de Acesso:</label>
+        <select name="perfil" class="select" style="width: 100%;">
+          {% for p in perfis %}
+            <option value="{{ p }}">{{ p }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div style="margin-bottom: 1.5rem;">
+        <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Senha Inicial:</label>
+        <input type="password" name="senha" class="input" style="width: 100%;" placeholder="Mínimo de 6 caracteres" required />
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-novo-usuario')">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Cadastrar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal Redefinir Senha -->
+<div id="modal-senha-usuario" class="modal-overlay">
+  <div class="modal-box">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+      <h3 style="font-size: 1.15rem; font-weight: 700;">Redefinir Senha do Usuário</h3>
+      <button class="btn btn-secondary btn-sm" onclick="closeModal('modal-senha-usuario')">✕</button>
+    </div>
+
+    <form id="form-senha-usuario" method="POST">
+      <p style="font-size: 0.875rem; color: var(--text-muted); margin-bottom: 1rem;">
+        Definindo nova senha para o operador <strong id="label-user-login"></strong>:
+      </p>
+
+      <div style="margin-bottom: 1.25rem;">
+        <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem;">Nova Senha:</label>
+        <input type="password" name="nova_senha" class="input" style="width: 100%;" placeholder="Mínimo de 6 caracteres" required />
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-senha-usuario')">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Atualizar Senha</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function abrirModalSenha(userId, login) {
+  document.getElementById('label-user-login').textContent = login;
+  document.getElementById('form-senha-usuario').action = `/usuarios/${userId}/alterar-senha`;
+  openModal('modal-senha-usuario');
+}
+</script>
+{% endblock %}

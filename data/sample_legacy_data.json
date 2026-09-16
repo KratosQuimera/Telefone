@@ -1,0 +1,88 @@
+{
+  "BLOCO A": [
+    {
+      "Modelo": "Cisco CP-7821",
+      "I.P Cisco": "192.168.10.10",
+      "Descrição": "1001 - Balcão Recepção A",
+      "I.P": "192.168.10.10",
+      "MAC Cisco": "00:1B:54:12:34:56",
+      "Setor": "Recepção Central",
+      "Localização": "Térreo - Entrada Principal",
+      "Criticidade": "ALTA"
+    },
+    {
+      "Modelo": "Cisco CP-8841",
+      "I.P Cisco": "192.168.10.11",
+      "Descrição": "1002 - Posto de Enfermagem Ala A",
+      "I.P": "192.168.10.11",
+      "MAC Cisco": "00:1B:54:12:34:57",
+      "Setor": "Posto de Enfermagem 1",
+      "Localização": "1º Andar Ala Sul",
+      "Criticidade": "CRITICA"
+    },
+    {
+      "Modelo": "Cisco CP-3905",
+      "I.P Cisco": "192.168.10.12",
+      "Descrição": "1003 - Sala de Espera Bloco A",
+      "I.P": "192.168.10.12",
+      "MAC Cisco": "00:1B:54:12:34:58",
+      "Setor": "Recepção Central",
+      "Localização": "Térreo - Sala 10",
+      "Criticidade": "NORMAL"
+    }
+  ],
+  "PRONTO SOCORRO": [
+    {
+      "Modelo": "Cisco CP-8845",
+      "I.P Cisco": "192.168.20.10",
+      "Descrição": "2001 - Triagem e Classificação de Risco",
+      "I.P": "192.168.20.10",
+      "MAC Cisco": "00:1B:54:23:45:01",
+      "Setor": "Triagem e Classificação",
+      "Localização": "Entrada PS Ambulâncias",
+      "Criticidade": "CRITICA"
+    },
+    {
+      "Modelo": "Cisco CP-8861",
+      "I.P Cisco": "192.168.20.11",
+      "Descrição": "2002 - Sala Vermelha Ressuscitação",
+      "I.P": "192.168.20.11",
+      "MAC Cisco": "00:1B:54:23:45:02",
+      "Setor": "Sala de Emergência Vermelha",
+      "Localização": "PS Sala 01",
+      "Criticidade": "CRITICA"
+    },
+    {
+      "Modelo": "Cisco CP-7821",
+      "I.P Cisco": "192.168.20.12",
+      "Descrição": "2003 - Posto Central Atendimento PS",
+      "I.P": "192.168.20.12",
+      "MAC Cisco": "",
+      "Setor": "Recepção Central",
+      "Localização": "Guichê 03",
+      "Criticidade": "ALTA"
+    }
+  ],
+  "UTI GERAL": [
+    {
+      "Modelo": "Cisco CP-8841",
+      "I.P Cisco": "192.168.30.10",
+      "Descrição": "3001 - Posto Central de Monitoramento UTI",
+      "I.P": "192.168.30.10",
+      "MAC Cisco": "00:1B:54:34:56:01",
+      "Setor": "Box UTI Leito 01 a 10",
+      "Localização": "3º Andar Centro",
+      "Criticidade": "CRITICA"
+    },
+    {
+      "Modelo": "Cisco CP-7821",
+      "I.P Cisco": "192.168.30.11",
+      "Descrição": "3002 - Quarto Médico Plantonista UTI",
+      "I.P": "192.168.30.11",
+      "MAC Cisco": "00:1B:54:34:56:02",
+      "Setor": "Box UTI Leito 01 a 10",
+      "Localização": "3º Andar Sala Médicos",
+      "Criticidade": "CRITICA"
+    }
+  ]
+}

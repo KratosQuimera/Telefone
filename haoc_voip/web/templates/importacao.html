@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+
+{% block title %}Importação e Sincronização JSON - HAOC VoIP Monitor{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+  <div>
+    <h1 style="font-size: 1.5rem; font-weight: 800;">Sincronização com JSON Legado</h1>
+    <p style="color: var(--text-muted); font-size: 0.875rem;">
+      Importação com validação estrutural, diff visual interativo e proteção por backup automático
+    </p>
+  </div>
+
+  <a href="{{ url_for('importacao.exportar') }}" class="btn btn-secondary">
+    ⬇️ Baixar JSON Atual do Banco
+  </a>
+</div>
+
+<!-- Área de Upload e Drag-and-Drop -->
+<div 
+  id="json-drop-zone"
+  style="background: var(--bg-secondary); border: 2px dashed var(--border-color); border-radius: var(--radius-lg); padding: 2.5rem; text-align: center; cursor: pointer; transition: all 0.2s ease; margin-bottom: 2rem;"
+>
+  <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">📂</div>
+  <h3 style="font-size: 1.15rem; font-weight: 700; margin-bottom: 0.25rem;">
+    Arraste o arquivo JSON aqui ou clique para selecionar
+  </h3>
+  <p style="color: var(--text-muted); font-size: 0.85rem;">
+    Formato compatível com o HAOC VoIP Monitor original (organizado por blocos com chaves: Descrição, I.P, MAC Cisco, Modelo)
+  </p>
+  <input type="file" id="input-json-file" accept=".json,application/json" style="display: none;" />
+</div>
+
+<!-- Indicador de Carregamento -->
+<div id="analise-loading" style="display: none; text-align: center; padding: 2rem;">
+  <div style="font-size: 1.2rem; font-weight: 600; color: var(--color-brand);">
+    ⏳ Analisando arquivo e calculando diferenças com o banco de dados...
+  </div>
+</div>
+
+<!-- Container da Análise de Diferenças -->
+<div id="container-analise" style="display: none;">
+  <!-- Métricas do Diff -->
+  <div class="metrics-grid" style="grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));">
+    <div class="metric-card">
+      <div class="label">Total no Arquivo</div>
+      <div class="value" id="resumo-total">0</div>
+    </div>
+    <div class="metric-card online">
+      <div class="label">Novos Ramais</div>
+      <div class="value" id="resumo-novos">0</div>
+    </div>
+    <div class="metric-card" style="color: #0284c7;">
+      <div class="label">Com Alterações</div>
+      <div class="value" id="resumo-alterados">0</div>
+    </div>
+    <div class="metric-card offline">
+      <div class="label">Ausentes no JSON</div>
+      <div class="value" id="resumo-removidos">0</div>
+    </div>
+    <div class="metric-card" style="color: #b45309;">
+      <div class="label">Inconsistências</div>
+      <div class="value" id="resumo-inconsistentes">0</div>
+    </div>
+  </div>
+
+  <!-- Alerta de Inconsistências se houver -->
+  <div id="alerta-inconsistencias" class="alert alert-warning" style="display: none; margin-bottom: 1.5rem;">
+    <strong>⚠️ Inconsistências encontradas no arquivo:</strong>
+    <ul id="lista-inconsistencias" style="margin-left: 1.5rem; margin-top: 0.5rem; font-size: 0.85rem;"></ul>
+  </div>
+
+  <!-- Barra de Ações para Aplicação -->
+  <div class="toolbar" style="margin-bottom: 1rem;">
+    <div style="display: flex; align-items: center; gap: 0.75rem;">
+      <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; cursor: pointer;">
+        <input type="checkbox" id="chk-remover-ausentes" />
+        <span style="color: var(--status-offline); font-weight: 600;">Desativar ramais do banco que não estão neste JSON</span>
+      </label>
+    </div>
+
+    {% if current_user.is_admin %}
+    <div style="display: flex; gap: 0.5rem;">
+      <button id="btn-aplicar-selecionados" class="btn btn-secondary">
+        Aplicar Apenas Selecionados
+      </button>
+      <button id="btn-aplicar-tudo" class="btn btn-primary">
+        🚀 Aplicar Todas as Alterações
+      </button>
+    </div>
+    {% else %}
+    <div style="color: var(--text-muted); font-size: 0.85rem;">
+      Modo de visualização (Apenas Administradores podem aplicar alterações na base).
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Tabela de Diferenças Detalhada -->
+  <div class="table-responsive">
+    <table class="table">
+      <thead>
+        <tr>
+          <th style="width: 40px; text-align: center;">Sel.</th>
+          <th>Tipo</th>
+          <th>Descrição</th>
+          <th>Bloco</th>
+          <th>IP</th>
+          <th>MAC Cisco</th>
+          <th>Modelo</th>
+          <th>Diferença Detectada</th>
+        </tr>
+      </thead>
+      <tbody id="tbody-diff">
+        <!-- Preenchido via import.js -->
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/import.js') }}"></script>
+{% endblock %}

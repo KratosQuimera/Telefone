@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}Acesso Seguro - HAOC VoIP Monitor{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: center; align-items: center; min-height: 60vh;">
+  <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 2.5rem; width: 100%; max-width: 440px; box-shadow: var(--shadow-md);">
+    
+    <div style="text-align: center; margin-bottom: 2rem;">
+      <div style="display: inline-block; background: #0284c7; color: white; padding: 0.5rem 1rem; border-radius: 8px; font-weight: 800; font-size: 1.25rem; letter-spacing: 1px; margin-bottom: 0.75rem;">
+        HAOC TI
+      </div>
+      <h2 style="font-size: 1.35rem; font-weight: 700;">Autenticação do Sistema</h2>
+      <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.25rem;">
+        Monitoramento Corporativo de Telefonia VoIP Cisco
+      </p>
+    </div>
+
+    <form method="POST" action="{{ url_for('auth.login', next=request.args.get('next')) }}">
+      <div style="margin-bottom: 1.25rem;">
+        <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.4rem; color: var(--text-secondary);">
+          Usuário ou Matrícula:
+        </label>
+        <input 
+          type="text" 
+          name="login" 
+          class="input" 
+          style="width: 100%; padding: 0.6rem 0.85rem;" 
+          placeholder="Ex: admin ou analista"
+          value="{{ login_preenchido or '' }}"
+          required 
+          autofocus
+        />
+      </div>
+
+      <div style="margin-bottom: 1.75rem;">
+        <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.4rem; color: var(--text-secondary);">
+          Senha de Acesso:
+        </label>
+        <input 
+          type="password" 
+          name="senha" 
+          class="input" 
+          style="width: 100%; padding: 0.6rem 0.85rem;" 
+          placeholder="••••••••••••"
+          required
+        />
+      </div>
+
+      <button type="submit" class="btn btn-primary" style="width: 100%; justify-content: center; padding: 0.75rem; font-size: 0.95rem;">
+        Entrar no Sistema
+      </button>
+    </form>
+
+    <div style="margin-top: 2rem; padding-top: 1.25rem; border-top: 1px solid var(--border-color); font-size: 0.775rem; color: var(--text-muted); text-align: center;">
+      🔒 Conexão segura protegida por PBKDF2 e política de bloqueio contra ataques de força bruta.
+    </div>
+
+  </div>
+</div>
+{% endblock %}

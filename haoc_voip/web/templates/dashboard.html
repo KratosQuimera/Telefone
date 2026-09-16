@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard em Tempo Real - HAOC VoIP Monitor{% endblock %}
+
+{% block content %}
+<!-- Cabeçalho do Dashboard com Status da Varredura -->
+<div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; gap: 1rem;">
+  <div>
+    <h1 style="font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em;">
+      Monitoramento Operacional de Ramais
+    </h1>
+    <p style="color: var(--text-muted); font-size: 0.875rem;">
+      Visão consolidada da infraestrutura de comunicação hospitalar Cisco
+    </p>
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+    <span style="font-size: 0.8rem; color: var(--text-muted);">
+      Atualizado às <strong id="live-timestamp" style="color: var(--text-primary);">-</strong>
+    </span>
+
+    <select id="select-intervalo" class="select" style="font-size: 0.8rem; padding: 0.35rem 0.6rem;">
+      <option value="5">Atualizar: 5s</option>
+      <option value="10" selected>Atualizar: 10s</option>
+      <option value="30">Atualizar: 30s</option>
+      <option value="60">Atualizar: 60s</option>
+    </select>
+
+    {% if current_user.is_analista %}
+    <button id="btn-iniciar-varredura" class="btn btn-primary btn-sm">
+      ⚡ Varredura Imediata
+    </button>
+    <button id="btn-cancelar-varredura" class="btn btn-secondary btn-sm" disabled>
+      🛑 Cancelar
+    </button>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Métricas Consolidadas -->
+<div class="metrics-grid">
+  <div class="metric-card">
+    <div class="label">Total Cadastrado</div>
+    <div class="value" id="stat-total">-</div>
+  </div>
+
+  <div class="metric-card online">
+    <div class="label">Online (Ativo)</div>
+    <div class="value" id="stat-online">-</div>
+  </div>
+
+  <div class="metric-card offline">
+    <div class="label">Offline (Queda)</div>
+    <div class="value" id="stat-offline">-</div>
+  </div>
+
+  <div class="metric-card sem-ip">
+    <div class="label">Sem IP / Pendente</div>
+    <div class="value" id="stat-sem-ip">-</div>
+  </div>
+
+  <div class="metric-card inativo">
+    <div class="label">Desativados</div>
+    <div class="value" id="stat-inativo">-</div>
+  </div>
+
+  <div class="metric-card disponibilidade">
+    <div class="label">Disponibilidade</div>
+    <div class="value" id="stat-disponibilidade">-</div>
+  </div>
+
+  <div class="metric-card">
+    <div class="label">Latência Média</div>
+    <div class="value" id="stat-latencia" style="font-size: 1.4rem;">-</div>
+  </div>
+</div>
+
+<!-- Barra de Filtros e Busca Rápida -->
+<div class="toolbar">
+  <div class="toolbar-group" style="flex: 1; min-width: 250px;">
+    <input 
+      type="text" 
+      id="filtro-busca" 
+      class="input" 
+      placeholder="🔍 Buscar por descrição, IP, MAC ou modelo..." 
+      style="width: 100%; max-width: 380px;"
+    />
+  </div>
+
+  <div class="toolbar-group">
+    <select id="filtro-bloco" class="select">
+      <option value="">Todos os Blocos</option>
+      {% for b in blocos_disponiveis %}
+        <option value="{{ b }}">{{ b }}</option>
+      {% endfor %}
+    </select>
+
+    <select id="filtro-status" class="select">
+      <option value="">Todos os Status</option>
+      <option value="ONLINE">Online</option>
+      <option value="OFFLINE">Offline</option>
+      <option value="AGUARDANDO">Aguardando / Sem IP</option>
+      <option value="INATIVO">Inativo</option>
+    </select>
+
+    <select id="filtro-setor" class="select">
+      <option value="">Todos os Setores</option>
+      {% for s in setores_disponiveis %}
+        <option value="{{ s }}">{{ s }}</option>
+      {% endfor %}
+    </select>
+
+    <select id="filtro-ordenar" class="select">
+      <option value="status">Ordenar: Status Crítico</option>
+      <option value="descricao">Ordenar: Descrição (A-Z)</option>
+      <option value="duracao_offline">Ordenar: Duração Offline</option>
+      <option value="bloco">Ordenar: Bloco</option>
+    </select>
+  </div>
+</div>
+
+<!-- Contador de itens visíveis -->
+<div style="margin-bottom: 1rem; font-size: 0.85rem; color: var(--text-muted); font-weight: 500;" id="contador-filtrados">
+  Carregando ramais VoIP...
+</div>
+
+<!-- Container Dinâmico dos Blocos e Cartões -->
+<div id="container-blocos">
+  <!-- Preenchido via dashboard.js sem recarregar a tela -->
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% endblock %}

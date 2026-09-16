@@ -1,0 +1,6 @@
+{
+  "name": "HAOC VoIP Monitor Enterprise",
+  "description": "Sistema integrado de monitoramento e gestão de ramais VoIP Cisco para ambiente hospitalar, com dashboard web Flask, aplicação desktop PyQt6, banco SQLite e relatórios operacionais.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,21 @@
+[
+  "tests/test_auth_rbac.py::test_login_and_lockout",
+  "tests/test_auth_rbac.py::test_master_user_wagner_authentication",
+  "tests/test_auth_rbac.py::test_password_hashing",
+  "tests/test_auth_rbac.py::test_web_rbac_routes",
+  "tests/test_backup.py::test_backup_creation_and_listing",
+  "tests/test_backup.py::test_backup_restore_safety",
+  "tests/test_desktop_gui.py::test_import_dialog_instantiation",
+  "tests/test_desktop_gui.py::test_incidentes_dialog_instantiation",
+  "tests/test_desktop_gui.py::test_login_dialog_instantiation",
+  "tests/test_desktop_gui.py::test_main_window_instantiation",
+  "tests/test_desktop_gui.py::test_ramal_dialog_instantiation",
+  "tests/test_importer.py::test_import_and_diff_detection",
+  "tests/test_importer.py::test_invalid_json_format",
+  "tests/test_monitor.py::test_monitor_state_transition_and_incident",
+  "tests/test_monitor.py::test_sla_calculation",
+  "tests/test_validation.py::test_invalid_ipv4",
+  "tests/test_validation.py::test_mac_normalization",
+  "tests/test_validation.py::test_mac_regex_validation",
+  "tests/test_validation.py::test_valid_ipv4"
+]
