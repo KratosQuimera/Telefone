@@ -86,6 +86,7 @@ class LoginDialog(QDialog):
         self.btn_cancel.clicked.connect(self.reject)
 
         self.btn_login = QPushButton("Confirmar Acesso")
+        self.btn_login.setObjectName("btnPrimary")
         self.btn_login.clicked.connect(self._tentar_login)
 
         btn_box.addWidget(self.btn_cancel)

@@ -9,7 +9,8 @@ import {
   Edit, 
   Trash2, 
   RefreshCw,
-  Cpu
+  Cpu,
+  AlertTriangle
 } from "lucide-react";
 import { Ramal, Usuario } from "../types";
 
@@ -43,75 +44,88 @@ export const RamalCard: React.FC<RamalCardProps> = ({
 
   const isOnline = ramal.status === "ONLINE";
 
-  const statusConfig = isOnline
-    ? {
-        bg: "bg-emerald-50 text-emerald-700 border-emerald-200",
-        dot: "bg-emerald-500",
-        label: "Online",
-        border: "border-emerald-200",
-        cardIcon: "bg-emerald-100 text-emerald-900",
-      }
-    : {
-        bg: "bg-rose-50 text-rose-700 border-rose-200",
-        dot: "bg-rose-500",
-        label: "Offline",
-        border: "border-rose-200",
-        cardIcon: "bg-rose-100 text-rose-900",
-      };
-
   return (
-    <div className={`bg-white rounded-xl border ${statusConfig.border} shadow-xs hover:shadow-md transition-all p-4 relative flex flex-col justify-between`}>
-      <div>
+    <div 
+      className={`rounded-xl border transition-all p-3 relative flex flex-col justify-between min-w-0 ${
+        isOnline 
+          ? "bg-[#111827] border-slate-800 hover:border-emerald-500/50 hover:bg-[#131b2c] shadow-xs" 
+          : "offline-card-pulse border-rose-500/80 shadow-md shadow-rose-950/40"
+      }`}
+    >
+      <div className="min-w-0">
+        {/* Banner de Alerta Chamativo para Ramal Offline (Mais compacto) */}
+        {!isOnline && (
+          <div className="mb-2 px-2 py-0.5 rounded bg-rose-600/90 text-white flex items-center justify-between shadow-xs">
+            <span className="flex items-center gap-1 text-[10px] font-bold tracking-wide uppercase truncate">
+              <AlertTriangle className="w-3 h-3 text-amber-300 offline-badge-blink shrink-0" />
+              <span className="truncate">Falha Detectada</span>
+            </span>
+            <span className="offline-badge-blink text-[9px] font-extrabold bg-white text-rose-700 px-1 py-0.2 rounded shadow-xs uppercase shrink-0">
+              Atenção
+            </span>
+          </div>
+        )}
+
         {/* Top Header: Ramal & Status */}
-        <div className="flex items-start justify-between gap-2 mb-2">
-          <div className="flex items-center gap-2.5">
-            <div className={`w-10 h-10 rounded-lg flex items-center justify-center font-bold text-base ${statusConfig.cardIcon}`}>
-              <Phone className="w-5 h-5" />
+        <div className="flex items-start justify-between gap-1.5 mb-1.5 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <div 
+              className={`w-7 h-7 rounded-md flex items-center justify-center font-bold text-xs shrink-0 ${
+                isOnline 
+                  ? "bg-emerald-950/90 text-emerald-400 border border-emerald-800/80" 
+                  : "bg-rose-950 text-rose-300 border border-rose-800 offline-badge-blink"
+              }`}
+            >
+              <Phone className="w-3.5 h-3.5" />
             </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span className="font-extrabold text-slate-900 text-lg tracking-tight">
-                  Ramal {ramal.numero}
-                </span>
-              </div>
-              <p className="text-xs font-medium text-slate-500 flex items-center gap-1">
-                <Cpu className="w-3 h-3 text-slate-400" />
-                {ramal.modelo || "Cisco CP-7841"}
+            <div className="min-w-0">
+              <span className="font-extrabold text-white text-sm tracking-tight truncate block leading-none">
+                Ramal {ramal.numero}
+              </span>
+              <p className="text-[10px] font-medium text-slate-400 flex items-center gap-1 mt-0.5 truncate">
+                <Cpu className="w-2.5 h-2.5 text-slate-500 shrink-0" />
+                <span className="truncate">{ramal.modelo || "Cisco 7841"}</span>
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-1">
-            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${statusConfig.bg}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${statusConfig.dot} ${isOnline ? "animate-pulse" : ""}`} />
-              {statusConfig.label}
+          <div className="flex items-center gap-1 shrink-0">
+            <span 
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                isOnline 
+                  ? "bg-emerald-950/80 text-emerald-300 border-emerald-800/80" 
+                  : "bg-rose-950/80 text-rose-300 border-rose-800 ring-1 ring-rose-500/50"
+              }`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? "bg-emerald-400 animate-pulse" : "bg-rose-400 offline-badge-blink"}`} />
+              {isOnline ? "Online" : "Offline"}
             </span>
 
-            {/* Menu de ações (sensível: se não autenticado, App.tsx solicita senha) */}
+            {/* Menu de ações */}
             <div className="relative">
               <button
                 onClick={() => setMenuOpen(!menuOpen)}
-                className="p-1 text-slate-400 hover:text-slate-600 rounded"
+                className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800"
                 title="Opções do ramal"
               >
-                <MoreVertical className="w-4 h-4" />
+                <MoreVertical className="w-3.5 h-3.5" />
               </button>
               {menuOpen && (
                 <div 
                   onMouseLeave={() => setMenuOpen(false)}
-                  className="absolute right-0 mt-1 w-32 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-20"
+                  className="absolute right-0 mt-1 w-28 bg-slate-900 rounded-lg shadow-xl border border-slate-700 py-1 z-20 text-xs"
                 >
                   <button
                     onClick={() => { setMenuOpen(false); onEdit(ramal); }}
-                    className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+                    className="w-full text-left px-3 py-1.5 text-slate-200 hover:bg-slate-800 flex items-center gap-2"
                   >
-                    <Edit className="w-3.5 h-3.5" /> Editar
+                    <Edit className="w-3 h-3 text-emerald-400" /> Editar
                   </button>
                   <button
                     onClick={() => { setMenuOpen(false); onDelete(ramal.id); }}
-                    className="w-full text-left px-3 py-1.5 text-xs text-rose-600 hover:bg-rose-50 flex items-center gap-2"
+                    className="w-full text-left px-3 py-1.5 text-rose-400 hover:bg-rose-950/40 flex items-center gap-2"
                   >
-                    <Trash2 className="w-3.5 h-3.5" /> Excluir
+                    <Trash2 className="w-3 h-3 text-rose-400" /> Excluir
                   </button>
                 </div>
               )}
@@ -120,54 +134,69 @@ export const RamalCard: React.FC<RamalCardProps> = ({
         </div>
 
         {/* Descrição */}
-        <h4 className="font-semibold text-slate-800 text-sm mb-3 line-clamp-1" title={ramal.descricao}>
-          {ramal.descricao}
+        <h4 
+          className="font-semibold text-slate-200 text-xs mb-2 truncate min-w-0" 
+          title={ramal.descricao}
+        >
+          {ramal.descricao || "Sem descrição"}
         </h4>
 
-        {/* Informações detalhadas */}
-        <div className="space-y-1.5 text-xs text-slate-600 bg-slate-50/70 p-2.5 rounded-lg border border-slate-100">
-          <div className="flex items-center justify-between">
-            <span className="text-slate-400 flex items-center gap-1">
-              <MapPin className="w-3 h-3" /> Bloco:
+        {/* Grade 2x2 compacta de informações detalhadas (Economiza espaço mantendo 100% das infos) */}
+        <div className="grid grid-cols-2 gap-1.5 p-2 rounded-lg bg-[#0b0f19] border border-slate-800/90 text-[11px]">
+          {/* Bloco */}
+          <div className="min-w-0">
+            <span className="text-slate-400 text-[10px] flex items-center gap-1 font-medium">
+              <MapPin className="w-2.5 h-2.5 text-slate-500 shrink-0" /> Bloco
             </span>
-            <span className="font-medium text-slate-700">{ramal.bloco}</span>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <span className="text-slate-400 flex items-center gap-1">
-              <Tag className="w-3 h-3" /> Setor:
+            <span className="font-semibold text-slate-200 text-xs truncate block" title={ramal.bloco}>
+              {ramal.bloco || "Geral"}
             </span>
-            <span className="font-medium text-slate-700">{ramal.setor}</span>
           </div>
 
-          <div className="flex items-center justify-between">
-            <span className="text-slate-400">IP:</span>
-            <code className="font-mono text-[11px] text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-200">
-              {ramal.ip}
-            </code>
+          {/* Setor */}
+          <div className="min-w-0">
+            <span className="text-slate-400 text-[10px] flex items-center gap-1 font-medium">
+              <Tag className="w-2.5 h-2.5 text-slate-500 shrink-0" /> Setor
+            </span>
+            <span className="font-semibold text-slate-200 text-xs truncate block" title={ramal.setor}>
+              {ramal.setor || "Geral"}
+            </span>
           </div>
 
-          <div className="flex items-center justify-between">
-            <span className="text-slate-400">MAC Cisco:</span>
-            <code className="font-mono text-[11px] text-slate-600">
-              {ramal.mac_cisco}
+          {/* IP */}
+          <div className="min-w-0">
+            <span className="text-slate-400 text-[10px] font-medium block">IP</span>
+            {ramal.ip && ramal.ip.trim() !== "None" && ramal.ip.trim() !== "" ? (
+              <code className="font-mono text-[10px] text-emerald-400 bg-emerald-950/60 px-1 py-0.2 rounded border border-emerald-800/60 truncate block" title={ramal.ip}>
+                {ramal.ip}
+              </code>
+            ) : (
+              <span className="text-slate-400 text-[10px]">-</span>
+            )}
+          </div>
+
+          {/* MAC Cisco */}
+          <div className="min-w-0">
+            <span className="text-slate-400 text-[10px] font-medium block">MAC Cisco</span>
+            <code className="font-mono text-[10px] text-slate-300 truncate block" title={ramal.mac_cisco}>
+              {ramal.mac_cisco || "-"}
             </code>
           </div>
         </div>
       </div>
 
       {/* Footer com Latência & Ping */}
-      <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between">
-        <div className="flex items-center gap-2 text-xs">
+      <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-center justify-between min-w-0">
+        <div className="flex items-center gap-1.5 text-[11px] min-w-0">
           {isOnline ? (
-            <span className="text-emerald-700 font-semibold flex items-center gap-1">
-              <Wifi className="w-3.5 h-3.5" />
-              {ramal.latencia_ms ? `${ramal.latencia_ms}ms` : "Conectado"}
+            <span className="text-emerald-400 font-semibold flex items-center gap-1 truncate">
+              <Wifi className="w-3 h-3 text-emerald-400 shrink-0" />
+              <span className="truncate">{ramal.latencia_ms ? `${ramal.latencia_ms}ms` : "Conectado"}</span>
             </span>
           ) : (
-            <span className="text-rose-600 font-medium flex items-center gap-1">
-              <WifiOff className="w-3.5 h-3.5" />
-              Indisponível
+            <span className="text-rose-400 font-medium flex items-center gap-1 truncate">
+              <WifiOff className="w-3 h-3 text-rose-400 shrink-0" />
+              <span className="truncate">Indisponível</span>
             </span>
           )}
         </div>
@@ -175,11 +204,11 @@ export const RamalCard: React.FC<RamalCardProps> = ({
         <button
           onClick={handlePing}
           disabled={isPinging}
-          title="Executar teste de ping rápido"
-          className="flex items-center gap-1 text-[11px] font-semibold text-slate-600 hover:text-emerald-700 bg-slate-100 hover:bg-emerald-50 px-2 py-1 rounded transition border border-slate-200"
+          title="Testar resposta de ping"
+          className="flex items-center gap-1 text-[10px] font-bold text-slate-300 hover:text-emerald-300 bg-[#1a2333] hover:bg-[#233147] px-2 py-0.5 rounded border border-slate-700 transition shrink-0"
         >
-          <RefreshCw className={`w-3 h-3 ${isPinging ? "animate-spin text-emerald-600" : ""}`} />
-          <span>{isPinging ? "Testando..." : "Ping"}</span>
+          <RefreshCw className={`w-2.5 h-2.5 ${isPinging ? "animate-spin text-emerald-400" : ""}`} />
+          <span>{isPinging ? "..." : "Ping"}</span>
         </button>
       </div>
     </div>

@@ -51,6 +51,15 @@ export interface LogAuditoria {
   detalhes: string;
 }
 
+export interface NetworkSyncConfig {
+  caminho_rede: string;
+  auto_sync: boolean;
+  ultimo_sync: string | null;
+  status: "OK" | "ERRO" | "NAO_CONFIGURADO";
+  ultimo_erro: string | null;
+  total_processados: number;
+}
+
 export interface DatabaseSchema {
   ramais: Ramal[];
   incidentes: Incidente[];
@@ -60,6 +69,7 @@ export interface DatabaseSchema {
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "store.json");
+const NETWORK_CONFIG_PATH = path.join(DATA_DIR, "network_config.json");
 
 function hashPassword(pass: string): string {
   return crypto.createHash("sha256").update(pass + "HAOC_SALT_2026").digest("hex");
@@ -313,7 +323,7 @@ function getInitialData(): DatabaseSchema {
         data_hora: new Date(Date.now() - 60 * 60000).toISOString(),
         usuario_nome: "Wagner (Administrador Master)",
         acao: "SISTEMA_INICIALIZADO",
-        detalhes: "Núcleo corporativo HAOC VoIP Monitor Enterprise inicializado.",
+        detalhes: "Núcleo corporativo HAOC VoIP Monitor Enterprise inicializado - Hospital Alemão Osvaldo Cruz.",
       },
       {
         id: 2,
@@ -328,6 +338,7 @@ function getInitialData(): DatabaseSchema {
 
 class Store {
   private data: DatabaseSchema;
+  private networkConfig: NetworkSyncConfig;
 
   constructor() {
     this.data = this.load();
@@ -339,6 +350,120 @@ class Store {
     }
     this.ensureMasterUser();
     this.save();
+
+    // Carregar e tentar sincronizar automaticamente na inicialização a partir do caminho de rede
+    this.networkConfig = this.loadNetworkConfig();
+    if (this.networkConfig.auto_sync && this.networkConfig.caminho_rede) {
+      console.log(`[Store] Inicializando busca do JSON na pasta de rede: ${this.networkConfig.caminho_rede}`);
+      this.sincronizarCaminhoRede(this.networkConfig.caminho_rede);
+    }
+  }
+
+  private loadNetworkConfig(): NetworkSyncConfig {
+    const envPath = process.env.HAOC_NETWORK_JSON_PATH || process.env.NETWORK_JSON_PATH || "";
+    const defaultCfg: NetworkSyncConfig = {
+      caminho_rede: envPath,
+      auto_sync: true,
+      ultimo_sync: null,
+      status: envPath ? "ERRO" : "NAO_CONFIGURADO",
+      ultimo_erro: null,
+      total_processados: 0,
+    };
+    try {
+      if (fs.existsSync(NETWORK_CONFIG_PATH)) {
+        const raw = fs.readFileSync(NETWORK_CONFIG_PATH, "utf-8");
+        const parsed = JSON.parse(raw);
+        return {
+          ...defaultCfg,
+          ...parsed,
+          caminho_rede: parsed.caminho_rede || envPath,
+        };
+      }
+    } catch (err) {
+      console.warn("[Store] Erro ao ler network_config.json:", err);
+    }
+    return defaultCfg;
+  }
+
+  public saveNetworkConfig() {
+    try {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+      fs.writeFileSync(NETWORK_CONFIG_PATH, JSON.stringify(this.networkConfig, null, 2), "utf-8");
+    } catch (err) {
+      console.error("[Store] Erro ao salvar network_config.json:", err);
+    }
+  }
+
+  public getNetworkConfig(): NetworkSyncConfig {
+    return { ...this.networkConfig };
+  }
+
+  public setNetworkConfig(caminho: string, autoSync: boolean = true): NetworkSyncConfig {
+    this.networkConfig.caminho_rede = (caminho || "").trim();
+    this.networkConfig.auto_sync = autoSync;
+    this.saveNetworkConfig();
+    if (this.networkConfig.caminho_rede) {
+      this.sincronizarCaminhoRede(this.networkConfig.caminho_rede);
+    }
+    return { ...this.networkConfig };
+  }
+
+  public sincronizarCaminhoRede(caminhoEspecificado?: string): { sucesso: boolean; mensagem: string; detalhe?: any } {
+    const alvo = (caminhoEspecificado || this.networkConfig.caminho_rede || "").trim();
+    if (!alvo) {
+      this.networkConfig.status = "NAO_CONFIGURADO";
+      this.networkConfig.ultimo_erro = "Nenhum caminho de rede configurado.";
+      this.saveNetworkConfig();
+      return { sucesso: false, mensagem: "Nenhum caminho de rede configurado." };
+    }
+
+    try {
+      let arquivoParaLer = alvo;
+      if (!fs.existsSync(alvo)) {
+        throw new Error(`Caminho de rede '${alvo}' não encontrado ou inacessível no momento.`);
+      }
+
+      const stat = fs.statSync(alvo);
+      if (stat.isDirectory()) {
+        const arquivos = fs.readdirSync(alvo).filter((f) => f.toLowerCase().endsWith(".json"));
+        if (arquivos.length === 0) {
+          throw new Error(`Nenhum arquivo .json encontrado na pasta de rede informada (${alvo}).`);
+        }
+        let escolhido = arquivos.find((f) => f.toLowerCase().includes("ramais") || f.toLowerCase().includes("haoc"));
+        if (!escolhido) {
+          escolhido = arquivos[0];
+        }
+        arquivoParaLer = path.join(alvo, escolhido);
+      }
+
+      const conteudoRaw = fs.readFileSync(arquivoParaLer, "utf-8");
+      const parsed = JSON.parse(conteudoRaw);
+      const resultado = this.importarJsonLegado(parsed, "AutoSync (Pasta de Rede)");
+
+      this.networkConfig.caminho_rede = alvo;
+      this.networkConfig.ultimo_sync = new Date().toISOString();
+      this.networkConfig.status = "OK";
+      this.networkConfig.ultimo_erro = null;
+      this.networkConfig.total_processados = resultado.total;
+      this.saveNetworkConfig();
+
+      this.addLog("Sistema (AutoSync Rede)", "SINCRONIZACAO_REDE", `Sincronização com pasta de rede concluída a partir de ${path.basename(arquivoParaLer)}: ${resultado.inseridos} inseridos, ${resultado.atualizados} atualizados.`);
+
+      return {
+        sucesso: true,
+        mensagem: `JSON de rede sincronizado com sucesso (${resultado.total} ramais ativos).`,
+        detalhe: resultado,
+      };
+    } catch (err: any) {
+      const msgErro = err.message || "Erro desconhecido ao acessar pasta de rede.";
+      this.networkConfig.status = "ERRO";
+      this.networkConfig.ultimo_erro = msgErro;
+      this.saveNetworkConfig();
+      console.warn(`[AutoSync Rede] Falha ao sincronizar de '${alvo}':`, msgErro);
+      return { sucesso: false, mensagem: msgErro };
+    }
   }
 
   private load(): DatabaseSchema {
@@ -462,6 +587,18 @@ class Store {
           r.setor.toLowerCase().includes(q)
       );
     }
+
+    // Ordenação: 1. OFFLINE primeiro (topo) | 2. Alfabética pela descrição
+    result.sort((a, b) => {
+      const aOff = a.status === "OFFLINE";
+      const bOff = b.status === "OFFLINE";
+      if (aOff && !bOff) return -1;
+      if (!aOff && bOff) return 1;
+      const cmpDesc = a.descricao.localeCompare(b.descricao, "pt-BR", { sensitivity: "base", numeric: true });
+      if (cmpDesc !== 0) return cmpDesc;
+      return a.numero.localeCompare(b.numero, "pt-BR", { numeric: true });
+    });
+
     return result;
   }
 
@@ -638,22 +775,103 @@ class Store {
     }));
   }
 
-  public importarJsonLegado(itens: any[], usuarioNome: string) {
+  public importarJsonLegado(input: any, usuarioNome: string) {
     let inseridos = 0;
     let atualizados = 0;
 
-    for (const item of itens) {
-      const num = String(item.numero || item.ramal || "").trim();
+    let listaRaw: Array<{ item: any; blocoPadrao?: string }> = [];
+
+    if (Array.isArray(input)) {
+      listaRaw = input.map((it) => ({ item: it }));
+    } else if (typeof input === "object" && input !== null) {
+      if (Array.isArray(input.ramais)) {
+        listaRaw = input.ramais.map((it: any) => ({ item: it }));
+      } else if (Array.isArray(input.itens)) {
+        listaRaw = input.itens.map((it: any) => ({ item: it }));
+      } else {
+        // Formato estruturado por Blocos: { "Bloco A": [...], "Bloco B": [...] }
+        for (const [chaveBloco, valLista] of Object.entries(input)) {
+          if (Array.isArray(valLista)) {
+            for (const it of valLista) {
+              listaRaw.push({ item: it, blocoPadrao: chaveBloco });
+            }
+          }
+        }
+      }
+    }
+
+    for (const { item, blocoPadrao } of listaRaw) {
+      if (!item || typeof item !== "object") continue;
+
+      const modelo = item["Modelo"] || item["modelo"] || "Cisco 7841";
+      const descricao = item["Descrição"] || item["Descricao"] || item["descricao"] || "";
+      const rawCisco = item["I.P Cisco"] || item["MAC Cisco"] || item["mac_cisco"] || item["mac"] || "";
+      const rawIp = item["I.P"] || item["ip"] || item["IP"] || "";
+
+      // Tratar "None" / "null" / "-" como sem IP (Status Offline)
+      const isNoneIp = !rawIp || String(rawIp).trim().toLowerCase() === "none" || String(rawIp).trim() === "-";
+      const ip = isNoneIp ? "" : String(rawIp).trim();
+
+      // Extração inteligente do número do ramal
+      let num = String(item["numero"] || item["ramal"] || "").trim();
+      if (!num && descricao) {
+        const matchFim = descricao.match(/(?:-\s*|\b)(\d{3,5})\s*$/);
+        const matchIni = descricao.match(/^\s*(\d{3,5})\b/);
+        const matchAny = descricao.match(/\b(\d{3,5})\b/);
+        if (matchFim) num = matchFim[1];
+        else if (matchIni) num = matchIni[1];
+        else if (matchAny) num = matchAny[1];
+      }
+
       if (!num) continue;
+
+      // Normalização de MAC / SEP / CSF
+      let mac = "";
+      const ciscoStr = String(rawCisco).trim();
+      if (ciscoStr.toUpperCase().startsWith("SEP") && ciscoStr.length === 15) {
+        const hex = ciscoStr.slice(3).toUpperCase();
+        mac = hex.match(/.{1,2}/g)?.join(":") || hex;
+      } else if (ciscoStr.toUpperCase().startsWith("CSF")) {
+        mac = ciscoStr.toUpperCase();
+      } else if (ciscoStr) {
+        const clean = ciscoStr.replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
+        if (clean.length === 12) {
+          mac = clean.match(/.{1,2}/g)?.join(":") || clean;
+        } else {
+          mac = ciscoStr;
+        }
+      }
+
+      // Extração de Setor da descrição
+      let setor = item["Setor"] || item["setor"] || "";
+      if (!setor && descricao) {
+        const partes = descricao.split(" - ").map((s: string) => s.trim()).filter(Boolean);
+        if (partes.length >= 3) {
+          const penultima = partes[partes.length - 2];
+          if (/^\d+$/.test(penultima) && partes.length >= 4) {
+            setor = partes[partes.length - 3];
+          } else {
+            setor = penultima;
+          }
+        } else if (partes.length === 2) {
+          setor = /^\d+$/.test(partes[1]) ? partes[0] : partes[1];
+        }
+      }
+      if (!setor) setor = "Geral";
+
+      const bloco = item["Bloco"] || item["bloco"] || blocoPadrao || "Bloco Central";
+      const status = ip ? "ONLINE" : "OFFLINE";
 
       const existente = this.data.ramais.find((r) => r.numero === num);
       if (existente) {
-        existente.descricao = item.descricao || item.nome || existente.descricao;
-        existente.bloco = item.bloco || existente.bloco;
-        existente.setor = item.setor || existente.setor;
-        existente.ip = item.ip || existente.ip;
-        existente.mac_cisco = item.mac || item.mac_cisco || existente.mac_cisco;
-        existente.modelo = item.modelo || existente.modelo;
+        existente.descricao = descricao || existente.descricao;
+        existente.bloco = bloco;
+        existente.setor = setor;
+        existente.ip = ip;
+        existente.mac_cisco = mac || rawCisco || existente.mac_cisco;
+        existente.modelo = modelo;
+        existente.status = status;
+        existente.latencia_ms = status === "ONLINE" ? 14 : null;
         existente.ativo = true;
         atualizados++;
       } else {
@@ -661,14 +879,14 @@ class Store {
         this.data.ramais.push({
           id: maxId + 1,
           numero: num,
-          descricao: item.descricao || item.nome || `Ramal ${num}`,
-          bloco: item.bloco || "Bloco Central",
-          setor: item.setor || "Geral",
-          ip: item.ip || "192.168.10.150",
-          mac_cisco: item.mac || item.mac_cisco || "00:27:0D:00:00:00",
-          modelo: item.modelo || "Cisco CP-7841",
-          status: "ONLINE",
-          latencia_ms: 14,
+          descricao: descricao || `Ramal ${num}`,
+          bloco,
+          setor,
+          ip,
+          mac_cisco: mac || rawCisco || "00:27:0D:00:00:00",
+          modelo,
+          status,
+          latencia_ms: status === "ONLINE" ? 14 : null,
           ultimo_ping: new Date().toISOString(),
           ativo: true,
           criado_em: new Date().toISOString(),
@@ -676,9 +894,37 @@ class Store {
         inseridos++;
       }
     }
+
     this.addLog(usuarioNome, "IMPORTACAO_JSON", `Importação concluída: ${inseridos} inseridos, ${atualizados} atualizados.`);
     this.save();
     return { inseridos, atualizados, total: this.data.ramais.filter((r) => r.ativo).length };
+  }
+
+  public exportarJsonModelo(): Record<string, any[]> {
+    const ativos = this.data.ramais.filter((r) => r.ativo);
+    const res: Record<string, any[]> = {};
+
+    for (const r of ativos) {
+      const blk = r.bloco || "Bloco Central";
+      if (!res[blk]) res[blk] = [];
+
+      let ciscoId = r.mac_cisco || "";
+      const cleanHex = (r.mac_cisco || "").replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
+      if (r.mac_cisco && r.mac_cisco.toUpperCase().startsWith("CSF")) {
+        ciscoId = r.mac_cisco.toUpperCase();
+      } else if (cleanHex.length === 12) {
+        ciscoId = `SEP${cleanHex}`;
+      }
+
+      res[blk].push({
+        "Modelo": r.modelo || "Cisco 7841",
+        "I.P Cisco": ciscoId,
+        "Descrição": r.descricao,
+        "I.P": r.ip && r.status === "ONLINE" ? r.ip : (r.ip || "None"),
+      });
+    }
+
+    return res;
   }
 }
 

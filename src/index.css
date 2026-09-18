@@ -1,1 +1,33 @@
 @import "tailwindcss";
+
+@keyframes offlinePulseGlow {
+  0%, 100% {
+    border-color: #f43f5e;
+    box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.4), 0 0 18px rgba(244, 63, 94, 0.2);
+    background-color: #17111a;
+  }
+  50% {
+    border-color: #fb7185;
+    box-shadow: 0 0 0 3px rgba(225, 29, 72, 0.7), 0 0 26px rgba(225, 29, 72, 0.45);
+    background-color: #26121d;
+  }
+}
+
+@keyframes offlineBlinkBadge {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(1.08);
+  }
+}
+
+.offline-card-pulse {
+  animation: offlinePulseGlow 1.3s ease-in-out infinite;
+}
+
+.offline-badge-blink {
+  animation: offlineBlinkBadge 0.8s ease-in-out infinite;
+}

@@ -2,7 +2,6 @@ import React, { useState, useRef } from "react";
 import { 
   X, 
   Upload, 
-  FileText, 
   CheckCircle2, 
   AlertTriangle, 
   ArrowRight, 
@@ -24,6 +23,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
 }) => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [parsedItems, setParsedItems] = useState<any[] | null>(null);
+  const [rawObject, setRawObject] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [resultado, setResultado] = useState<{ inseridos: number; atualizados: number } | null>(null);
@@ -31,6 +31,119 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   if (!isOpen) return null;
+
+  const normalizarDados = (data: any): any[] => {
+    const listaNormalizada: any[] = [];
+
+    // Formato Estruturado por Blocos: { "Bloco A": [ ... ], "Bloco B": [ ... ] }
+    if (typeof data === "object" && !Array.isArray(data) && data !== null) {
+      for (const [chaveBloco, valLista] of Object.entries(data)) {
+        if (Array.isArray(valLista)) {
+          for (const item of valLista) {
+            if (!item || typeof item !== "object") continue;
+
+            const modelo = item["Modelo"] || item["modelo"] || "Cisco 7841";
+            const descricao = item["Descrição"] || item["Descricao"] || item["descricao"] || "";
+            const ciscoId = item["I.P Cisco"] || item["MAC Cisco"] || item["mac_cisco"] || item["mac"] || "";
+            const rawIp = item["I.P"] || item["ip"] || item["IP"] || "";
+
+            const isNoneIp = !rawIp || String(rawIp).trim().toLowerCase() === "none" || String(rawIp).trim() === "-";
+            const ip = isNoneIp ? "" : String(rawIp).trim();
+
+            // Extrair número do ramal da descrição (fim, início ou qualquer número)
+            let numero = item["numero"] || item["ramal"] || "";
+            if (!numero && descricao) {
+              const matchFim = descricao.match(/(?:-\s*|\b)(\d{3,5})\s*$/);
+              const matchIni = descricao.match(/^\s*(\d{3,5})\b/);
+              const matchAny = descricao.match(/\b(\d{3,5})\b/);
+              if (matchFim) numero = matchFim[1];
+              else if (matchIni) numero = matchIni[1];
+              else if (matchAny) numero = matchAny[1];
+            }
+
+            // Normalizar MAC
+            let mac = "";
+            const ciscoStr = String(ciscoId).trim();
+            if (ciscoStr.toUpperCase().startsWith("SEP") && ciscoStr.length === 15) {
+              const hex = ciscoStr.slice(3).toUpperCase();
+              mac = hex.match(/.{1,2}/g)?.join(":") || hex;
+            } else if (ciscoStr.toUpperCase().startsWith("CSF")) {
+              mac = ciscoStr.toUpperCase();
+            } else if (ciscoStr) {
+              const clean = ciscoStr.replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
+              if (clean.length === 12) {
+                mac = clean.match(/.{1,2}/g)?.join(":") || clean;
+              } else {
+                mac = ciscoStr;
+              }
+            }
+
+            // Extrair setor
+            let setor = item["Setor"] || item["setor"] || "";
+            if (!setor && descricao) {
+              const partes = descricao.split(" - ").map((s: string) => s.trim()).filter(Boolean);
+              if (partes.length >= 3) {
+                const penultima = partes[partes.length - 2];
+                if (/^\d+$/.test(penultima) && partes.length >= 4) {
+                  setor = partes[partes.length - 3];
+                } else {
+                  setor = penultima;
+                }
+              } else if (partes.length === 2) {
+                setor = /^\d+$/.test(partes[1]) ? partes[0] : partes[1];
+              }
+            }
+            if (!setor) setor = "Geral";
+
+            listaNormalizada.push({
+              numero: String(numero || "").trim() || "S/N",
+              descricao: descricao || `Ramal ${numero}`,
+              bloco: item["Bloco"] || item["bloco"] || chaveBloco,
+              setor,
+              ip,
+              mac_cisco: mac || ciscoId || "00:27:0D:00:00:00",
+              cisco_id: ciscoId,
+              modelo,
+              status: ip ? "ONLINE" : "OFFLINE",
+            });
+          }
+        }
+      }
+    } else if (Array.isArray(data)) {
+      // Compatibilidade com lista plana
+      for (const item of data) {
+        if (!item || typeof item !== "object") continue;
+        const modelo = item["Modelo"] || item["modelo"] || "Cisco 7841";
+        const descricao = item["Descrição"] || item["Descricao"] || item["descricao"] || "";
+        const ciscoId = item["I.P Cisco"] || item["MAC Cisco"] || item["mac_cisco"] || item["mac"] || "";
+        const rawIp = item["I.P"] || item["ip"] || item["IP"] || "";
+        const isNoneIp = !rawIp || String(rawIp).trim().toLowerCase() === "none" || String(rawIp).trim() === "-";
+        const ip = isNoneIp ? "" : String(rawIp).trim();
+
+        let numero = item["numero"] || item["ramal"] || "";
+        if (!numero && descricao) {
+          const matchFim = descricao.match(/(?:-\s*|\b)(\d{3,5})\s*$/);
+          const matchIni = descricao.match(/^\s*(\d{3,5})\b/);
+          if (matchFim) numero = matchFim[1];
+          else if (matchIni) numero = matchIni[1];
+        }
+
+        listaNormalizada.push({
+          numero: String(numero || "").trim() || "S/N",
+          descricao: descricao || `Ramal ${numero}`,
+          bloco: item["Bloco"] || item["bloco"] || "Bloco Central",
+          setor: item["Setor"] || item["setor"] || "Geral",
+          ip,
+          mac_cisco: ciscoId || "00:27:0D:00:00:00",
+          cisco_id: ciscoId,
+          modelo,
+          status: ip ? "ONLINE" : "OFFLINE",
+        });
+      }
+    }
+
+    return listaNormalizada;
+  };
 
   const processFile = (file: File) => {
     setError(null);
@@ -49,19 +162,11 @@ export const ImportModal: React.FC<ImportModalProps> = ({
       try {
         const text = e.target?.result as string;
         const data = JSON.parse(text);
-        let list: any[] = [];
-        if (Array.isArray(data)) {
-          list = data;
-        } else if (data.ramais && Array.isArray(data.ramais)) {
-          list = data.ramais;
-        } else if (data.data && Array.isArray(data.data)) {
-          list = data.data;
-        } else {
-          throw new Error("O JSON precisa conter um array direto ou uma propriedade 'ramais'.");
-        }
+        setRawObject(data);
 
+        const list = normalizarDados(data);
         if (list.length === 0) {
-          throw new Error("O arquivo JSON não contém nenhum ramal cadastrado.");
+          throw new Error("Nenhum ramal válido foi encontrado no arquivo JSON. Verifique as chaves de bloco.");
         }
 
         setParsedItems(list);
@@ -106,7 +211,9 @@ export const ImportModal: React.FC<ImportModalProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const res = await onImport(parsedItems);
+      // Enviar rawObject se existir para o backend preservar estrutura oficial por blocos
+      const payloadParaEnvio = rawObject || parsedItems;
+      const res = await onImport(payloadParaEnvio);
       setResultado(res);
     } catch (e: any) {
       setError(e.message || "Erro ao processar importação.");
@@ -116,37 +223,52 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   };
 
   const handleDownloadModelo = () => {
-    const modelo = [
-      {
-        numero: "2060",
-        descricao: "Farmácia Central - Balcão 1",
-        bloco: "Bloco Central",
-        setor: "Farmácia",
-        ip: "192.168.10.80",
-        mac: "00:27:0D:B1:C2:E1",
-        modelo: "Cisco CP-7841"
-      },
-      {
-        numero: "2061",
-        descricao: "CDI - Sala de Tomografia Computadorizada",
-        bloco: "Bloco Central",
-        setor: "CDI",
-        ip: "192.168.10.81",
-        mac: "00:27:0D:B1:C2:E2",
-        modelo: "Cisco CP-8845"
-      },
-      {
-        numero: "2070",
-        descricao: "Emergência Pediátrica - Posto Enfermagem",
-        bloco: "Pronto Socorro",
-        setor: "Pediatria",
-        ip: "192.168.10.82",
-        mac: "00:27:0D:B1:C2:E3",
-        modelo: "Cisco CP-7841"
-      }
-    ];
+    const modeloOficial = {
+      "Bloco A": [
+        {
+          "Modelo": "Cisco Unified Client Services Framework",
+          "I.P Cisco": "CSF18982",
+          "Descrição": "JABBER - Recp_Bl.A - Ouvidoria - 6452",
+          "I.P": "None"
+        },
+        {
+          "Modelo": "Cisco 7841",
+          "I.P Cisco": "SEP2C86D276454B",
+          "Descrição": "Matriz - 1A Bl.A - Juridico - 0351",
+          "I.P": "10.192.58.24"
+        }
+      ],
+      "Bloco B": [
+        {
+          "Modelo": "Cisco 7841",
+          "I.P Cisco": "SEP2C86D2764624",
+          "Descrição": "Matriz - 10A_Bl.B - 10B Quarto 1000 - 1000",
+          "I.P": "10.193.28.25"
+        },
+        {
+          "Modelo": "Cisco 7841",
+          "I.P Cisco": "SEP2C3ECF86C880",
+          "Descrição": "Matriz - 10A_Bl.B - 10B Quarto 1001 - 1001",
+          "I.P": "10.193.28.130"
+        }
+      ],
+      "Bloco E": [
+        {
+          "Modelo": "Cisco 7841",
+          "I.P Cisco": "SEP2C3ECF87F9C5",
+          "Descrição": "Matriz - 10A_Bl.E - 10E Quarto 1016 - 1016",
+          "I.P": "10.195.28.91"
+        },
+        {
+          "Modelo": "Cisco 7841",
+          "I.P Cisco": "SEP2C3ECF86C4AB",
+          "Descrição": "Matriz - 10A_Bl.E - 10E Quarto 1017 - 1017",
+          "I.P": "10.195.28.165"
+        }
+      ]
+    };
 
-    const blob = new Blob([JSON.stringify(modelo, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify(modeloOficial, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -160,6 +282,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   const resetarSelecao = () => {
     setSelectedFile(null);
     setParsedItems(null);
+    setRawObject(null);
     setError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -173,7 +296,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
             <Upload className="w-5 h-5 text-emerald-400" />
             <div>
               <h3 className="font-bold text-base">Importação de Ramais por Arquivo JSON</h3>
-              <p className="text-[11px] text-slate-400">Carregamento seguro de planilhas e cadastros legados HAOC</p>
+              <p className="text-[11px] text-slate-400">Modelo Oficial Cisco estruturado por Blocos</p>
             </div>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-white transition">
@@ -190,7 +313,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
               </div>
               <h4 className="text-lg font-bold text-slate-800">Arquivo Sincronizado com Sucesso!</h4>
               <p className="text-xs text-slate-600">
-                Os registros do arquivo <strong>{selectedFile?.name}</strong> foram processados:
+                Os registros do arquivo <strong>{selectedFile?.name}</strong> foram integrados com êxito:
               </p>
               <div className="flex justify-center gap-4 py-2">
                 <div className="bg-emerald-50 px-5 py-2.5 rounded-xl border border-emerald-200 text-center">
@@ -206,7 +329,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
                 onClick={onClose}
                 className="mt-4 px-6 py-2 text-xs font-semibold bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition"
               >
-                Concluir e Ver Grade Atualizada
+                Concluir e Ver Painel Atualizado
               </button>
             </div>
           ) : (
@@ -243,7 +366,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
                     ou <span className="text-emerald-600 font-semibold underline">clique para selecionar do computador</span>
                   </p>
                   <p className="text-[11px] text-slate-400 mt-2">
-                    Suporta arquivos estruturados de ramais, nomes, IPs e MACs
+                    Formato por Blocos (ex: "Bloco A", "Bloco B") com Modelo, I.P Cisco, Descrição e I.P
                   </p>
                 </div>
               ) : (
@@ -255,7 +378,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
                     <div>
                       <h4 className="font-bold text-slate-900 text-xs">{selectedFile.name}</h4>
                       <p className="text-[11px] text-slate-500">
-                        Tamanho: {(selectedFile.size / 1024).toFixed(1)} KB • {parsedItems ? `${parsedItems.length} ramais detectados` : "Validando..."}
+                        Tamanho: {(selectedFile.size / 1024).toFixed(1)} KB • {parsedItems ? `${parsedItems.length} ramais mapeados` : "Validando..."}
                       </p>
                     </div>
                   </div>
@@ -272,14 +395,14 @@ export const ImportModal: React.FC<ImportModalProps> = ({
 
               {/* Botão para Baixar Modelo */}
               <div className="flex items-center justify-between text-xs pt-1">
-                <span className="text-slate-500">Precisa de um exemplo de arquivo compatível?</span>
+                <span className="text-slate-500">Formato oficial por blocos (Bloco A, B, E):</span>
                 <button
                   type="button"
                   onClick={handleDownloadModelo}
                   className="flex items-center gap-1.5 text-emerald-600 hover:text-emerald-700 font-semibold"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  Baixar Modelo .JSON
+                  Baixar Modelo Oficial .JSON
                 </button>
               </div>
 
@@ -291,31 +414,34 @@ export const ImportModal: React.FC<ImportModalProps> = ({
                 </div>
               )}
 
-              {/* Pré-visualização dos Ramais */}
+              {/* Pré-visualização dos Ramais Mapeados */}
               {parsedItems && (
                 <div className="border border-slate-200 rounded-xl overflow-hidden mt-3">
                   <div className="bg-slate-100 px-4 py-2 text-xs font-bold text-slate-700 flex justify-between items-center">
-                    <span>Prévia de Importação: {parsedItems.length} registros prontos</span>
-                    <span className="text-emerald-700 text-[11px] font-semibold">Estrutura Válida ✓</span>
+                    <span>Prévia de Importação: {parsedItems.length} ramais estruturados</span>
+                    <span className="text-emerald-700 text-[11px] font-semibold">Estrutura Reconhecida ✓</span>
                   </div>
                   <div className="max-h-48 overflow-y-auto divide-y divide-slate-100 text-xs">
-                    {parsedItems.slice(0, 10).map((it, idx) => (
+                    {parsedItems.map((it, idx) => (
                       <div key={idx} className="p-2.5 flex items-center justify-between hover:bg-slate-50">
-                        <div>
-                          <span className="font-bold text-slate-900 mr-2">Ramal {it.numero || it.ramal}</span>
-                          <span className="text-slate-600">{it.descricao || it.nome}</span>
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-900">Ramal {it.numero}</span>
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-200 text-slate-700">{it.bloco}</span>
+                            {it.status === "ONLINE" ? (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-700">ONLINE</span>
+                            ) : (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-100 text-rose-700">OFFLINE (None)</span>
+                            )}
+                          </div>
+                          <p className="text-slate-600 text-[11px] truncate max-w-sm">{it.descricao}</p>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-slate-500 font-mono text-[11px]">{it.ip || "-"}</span>
-                          <span className="text-slate-400 text-[11px]">{it.bloco || "Bloco Central"}</span>
+                        <div className="text-right">
+                          <p className="text-slate-700 font-mono text-[11px] font-medium">{it.ip || "I.P: None"}</p>
+                          <p className="text-slate-400 font-mono text-[10px]">{it.cisco_id || it.mac_cisco}</p>
                         </div>
                       </div>
                     ))}
-                    {parsedItems.length > 10 && (
-                      <div className="p-2 text-center text-slate-400 text-[11px] italic bg-slate-50/50">
-                        + {parsedItems.length - 10} outros ramais presentes no arquivo...
-                      </div>
-                    )}
                   </div>
                 </div>
               )}

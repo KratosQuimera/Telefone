@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { store } from "./server/store";
 
@@ -112,14 +113,57 @@ async function startServer() {
     res.json(store.getAuditoria());
   });
 
-  // Importação JSON Legado
+  // Importação e Exportação JSON no Modelo Oficial por Blocos
   app.post("/api/importar", (req, res) => {
-    const { itens, usuario_nome } = req.body;
-    if (!Array.isArray(itens)) {
-      return res.status(400).json({ erro: "Estrutura JSON inválida: lista de ramais esperada." });
+    const payload = req.body;
+    const usuarioNome = payload.usuario_nome || "Wagner";
+    const conteudo = payload.itens || payload.dados || payload.data || payload;
+
+    if (!conteudo || (typeof conteudo !== "object" && !Array.isArray(conteudo))) {
+      return res.status(400).json({ erro: "Estrutura JSON inválida: objeto com blocos ou lista esperada." });
     }
-    const resultado = store.importarJsonLegado(itens, usuario_nome || "Wagner");
+
+    try {
+      const resultado = store.importarJsonLegado(conteudo, usuarioNome);
+      res.json(resultado);
+    } catch (err: any) {
+      res.status(500).json({ erro: err.message || "Falha ao processar JSON." });
+    }
+  });
+
+  // Sincronização Automática com Pasta de Rede
+  app.get("/api/rede/config", (_req, res) => {
+    res.json(store.getNetworkConfig());
+  });
+
+  app.post("/api/rede/config", (req, res) => {
+    const { caminho, auto_sync } = req.body;
+    const cfg = store.setNetworkConfig(caminho || "", auto_sync !== false);
+    res.json(cfg);
+  });
+
+  app.post("/api/rede/sincronizar", (req, res) => {
+    const { caminho } = req.body || {};
+    const resultado = store.sincronizarCaminhoRede(caminho);
     res.json(resultado);
+  });
+
+  // Exportação em formato JSON oficial estruturado por Blocos
+  app.get("/api/exportar-json", (_req, res) => {
+    res.setHeader("Content-Disposition", "attachment; filename=ramais_haoc.json");
+    res.setHeader("Content-Type", "application/json");
+    res.json(store.exportarJsonModelo());
+  });
+
+  // Download do arquivo de modelo padrão
+  app.get("/api/modelo-json", (_req, res) => {
+    const modeloPath = path.join(process.cwd(), "data", "modelo_ramais_haoc.json");
+    if (fs.existsSync(modeloPath)) {
+      res.setHeader("Content-Disposition", "attachment; filename=modelo_ramais_haoc.json");
+      res.setHeader("Content-Type", "application/json");
+      return res.sendFile(modeloPath);
+    }
+    res.json(store.exportarJsonModelo());
   });
 
   // --- VITE MIDDLEWARE SETUP ---

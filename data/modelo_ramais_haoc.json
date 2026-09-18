@@ -1,0 +1,44 @@
+{
+  "Bloco A": [
+    {
+      "Modelo": "Cisco Unified Client Services Framework",
+      "I.P Cisco": "CSF18982",
+      "Descrição": "JABBER - Recp_Bl.A - Ouvidoria - 6452",
+      "I.P": "None"
+    },
+    {
+      "Modelo": "Cisco 7841",
+      "I.P Cisco": "SEP2C86D276454B",
+      "Descrição": "Matriz - 1A Bl.A - Juridico - 0351",
+      "I.P": "10.192.58.24"
+    }
+  ],
+  "Bloco B": [
+    {
+      "Modelo": "Cisco 7841",
+      "I.P Cisco": "SEP2C86D2764624",
+      "Descrição": "Matriz - 10A_Bl.B - 10B Quarto 1000 - 1000",
+      "I.P": "10.193.28.25"
+    },
+    {
+      "Modelo": "Cisco 7841",
+      "I.P Cisco": "SEP2C3ECF86C880",
+      "Descrição": "Matriz - 10A_Bl.B - 10B Quarto 1001 - 1001",
+      "I.P": "10.193.28.130"
+    }
+  ],
+  "Bloco E": [
+    {
+      "Modelo": "Cisco 7841",
+      "I.P Cisco": "SEP2C3ECF87F9C5",
+      "Descrição": "Matriz - 10A_Bl.E - 10E Quarto 1016 - 1016",
+      "I.P": "10.195.28.91"
+    },
+    {
+      "Modelo": "Cisco 7841",
+      "I.P Cisco": "SEP2C3ECF86C4AB",
+      "Descrição": "Matriz - 10A_Bl.E - 10E Quarto 1017 - 1017",
+      "I.P": "10.195.28.165"
+    }
+  ]
+}

@@ -16,9 +16,10 @@ import { RamalCard } from "./components/RamalCard";
 import { RamalModal } from "./components/RamalModal";
 import { ImportModal } from "./components/ImportModal";
 import { IncidentesModal } from "./components/IncidentesModal";
-import { ExeModal } from "./components/ExeModal";
+import { NetworkModal } from "./components/NetworkModal";
 import { LoginModal } from "./components/LoginModal";
 import { AuditoriaModal } from "./components/AuditoriaModal";
+import { Network } from "lucide-react";
 
 export default function App() {
   // Inicialização SEM senha na inicialização (Modo Livre / Monitoramento de Sala)
@@ -46,7 +47,7 @@ export default function App() {
   const [ramalEditar, setRamalEditar] = useState<Ramal | null>(null);
   const [modalImportOpen, setModalImportOpen] = useState(false);
   const [modalIncidentesOpen, setModalIncidentesOpen] = useState(false);
-  const [modalExeOpen, setModalExeOpen] = useState(false);
+  const [modalNetworkOpen, setModalNetworkOpen] = useState(false);
   const [modalLoginOpen, setModalLoginOpen] = useState(false);
   const [modalAuditoriaOpen, setModalAuditoriaOpen] = useState(false);
 
@@ -191,6 +192,11 @@ export default function App() {
     }
   };
 
+  // Exportar JSON oficial por Blocos
+  const handleExportarJson = () => {
+    window.location.href = "/api/exportar-json";
+  };
+
   // Lista de Blocos únicos para o filtro
   const blocosDisponiveis = useMemo(() => {
     const set = new Set<string>();
@@ -198,27 +204,47 @@ export default function App() {
     return ["TODOS", ...Array.from(set)];
   }, [ramais]);
 
-  // Filtragem dos ramais em memória (Estritamente ONLINE ou OFFLINE)
+  // Filtragem e Ordenação Prioritária dos ramais em memória:
+  // 1. Ramais OFFLINE aparecem no topo piscando para maior atenção
+  // 2. Assim que o erro for sanado (ONLINE), voltam à sequência em ordem alfabética
   const ramaisFiltrados = useMemo(() => {
-    return ramais.filter((r) => {
-      if (blocoSelecionado !== "TODOS" && r.bloco !== blocoSelecionado) return false;
-      if (statusFiltro !== "TODOS" && r.status !== statusFiltro) return false;
-      if (busca.trim()) {
-        const q = busca.toLowerCase();
-        const match =
-          r.numero.toLowerCase().includes(q) ||
-          r.descricao.toLowerCase().includes(q) ||
-          r.ip.includes(q) ||
-          r.mac_cisco.toLowerCase().includes(q) ||
-          r.setor.toLowerCase().includes(q);
-        if (!match) return false;
-      }
-      return true;
-    });
+    return ramais
+      .filter((r) => {
+        if (blocoSelecionado !== "TODOS" && r.bloco !== blocoSelecionado) return false;
+        if (statusFiltro !== "TODOS" && r.status !== statusFiltro) return false;
+        if (busca.trim()) {
+          const q = busca.toLowerCase();
+          const match =
+            r.numero.toLowerCase().includes(q) ||
+            r.descricao.toLowerCase().includes(q) ||
+            r.ip.includes(q) ||
+            r.mac_cisco.toLowerCase().includes(q) ||
+            r.setor.toLowerCase().includes(q);
+          if (!match) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const aOff = a.status === "OFFLINE";
+        const bOff = b.status === "OFFLINE";
+
+        // Se um estiver OFF e outro ON, o OFF tem prioridade máxima no topo
+        if (aOff && !bOff) return -1;
+        if (!aOff && bOff) return 1;
+
+        // Se ambos estiverem com mesmo status (ou quando voltar a ser ONLINE), ordem alfabética estrita
+        const cmpDesc = a.descricao.localeCompare(b.descricao, "pt-BR", { sensitivity: "base", numeric: true });
+        if (cmpDesc !== 0) return cmpDesc;
+        return a.numero.localeCompare(b.numero, "pt-BR", { numeric: true });
+      });
   }, [ramais, blocoSelecionado, statusFiltro, busca]);
 
+  const totalOfflineFiltrados = useMemo(() => {
+    return ramaisFiltrados.filter((r) => r.status === "OFFLINE").length;
+  }, [ramaisFiltrados]);
+
   return (
-    <div className="min-h-screen bg-slate-100/70 text-slate-800 flex flex-col antialiased">
+    <div className="min-h-screen bg-[#0a0e17] text-slate-100 flex flex-col antialiased">
       {/* Navbar Superior */}
       <Navbar
         usuario={usuario}
@@ -239,67 +265,68 @@ export default function App() {
             setModalImportOpen(true);
           });
         }}
+        onExportJson={handleExportarJson}
         onOpenIncidentes={() => setModalIncidentesOpen(true)}
         onOpenAuditoria={() => {
           executarAcaoSensivel("Acessar Trilha de Auditoria e Logs do Sistema", () => {
             setModalAuditoriaOpen(true);
           });
         }}
-        onOpenExe={() => setModalExeOpen(true)}
+        onOpenNetwork={() => setModalNetworkOpen(true)}
         onPingAll={handlePingAll}
         isScanning={isScanning}
         incidentesAbertos={stats.incidentesAbertos}
       />
 
       {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {/* Banner Informativo */}
-        <div className="mb-6 p-4 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 text-white shadow-md flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-2.5 sm:px-4 lg:px-6 py-4">
+        {/* Banner Informativo Dark NOC */}
+        <div className="mb-4 p-3.5 sm:p-4 rounded-xl bg-gradient-to-r from-[#0d131f] via-[#111827] to-[#162032] border border-slate-800 text-white shadow-md flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-              <Building2 className="w-6 h-6" />
+            <div className="w-10 h-10 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+              <Building2 className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold tracking-tight text-white flex items-center gap-2">
-                Hospital Augusto de Oliveira Camargo • NOC Telefonia IP
+              <h2 className="text-sm sm:text-base font-extrabold tracking-tight text-white flex items-center gap-2">
+                Hospital Alemão Osvaldo Cruz • NOC Telefonia IP
               </h2>
-              <p className="text-xs text-slate-300">
-                Monitoramento ativo e transparente de ramais VoIP corporativos. Acesso livre para consulta e status em tempo real.
+              <p className="text-[11px] text-slate-400">
+                Monitoramento contínuo de ramais VoIP e integração automática com pasta de rede.
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setModalExeOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-xs transition"
+              onClick={() => setModalNetworkOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1a263d] hover:bg-[#223352] text-sky-300 text-xs font-semibold border border-sky-800/80 shadow-xs transition"
             >
-              <PackageCheck className="w-3.5 h-3.5" />
-              Baixar / Compilar .EXE
+              <Network className="w-3.5 h-3.5 text-sky-400" />
+              <span>Pasta de Rede (JSON)</span>
             </button>
           </div>
         </div>
 
-        {/* Barra de Estatísticas em Tempo Real (Apenas Online / Offline) */}
+        {/* Barra de Estatísticas em Tempo Real */}
         <StatsBar stats={stats} />
 
-        {/* Barra de Filtros e Busca */}
-        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs mb-6 space-y-3">
-          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+        {/* Barra de Filtros e Busca Dark */}
+        <div className="bg-[#111827] p-3 rounded-xl border border-slate-800 shadow-xs mb-4 space-y-2.5">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
             {/* Campo de Busca */}
             <div className="relative flex-1">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
               <input
                 type="text"
                 placeholder="Buscar por número, descrição, setor, IPv4 ou MAC..."
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
-                className="w-full text-xs pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:bg-white focus:outline-hidden transition"
+                className="w-full text-xs pl-9 pr-8 py-2 bg-[#161f30] border border-slate-700/80 rounded-lg text-slate-100 placeholder:text-slate-500 focus:ring-1 focus:ring-emerald-500 focus:bg-[#1a2438] focus:outline-hidden transition font-sans"
               />
               {busca && (
                 <button
                   onClick={() => setBusca("")}
-                  className="absolute right-3 top-2.5 text-xs text-slate-400 hover:text-slate-600"
+                  className="absolute right-2.5 top-2 text-xs text-slate-400 hover:text-white"
                 >
                   Limpar
                 </button>
@@ -307,40 +334,40 @@ export default function App() {
             </div>
 
             {/* Filtro por Status (Estritamente ONLINE ou OFFLINE) */}
-            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl shrink-0 text-xs font-semibold text-slate-600">
+            <div className="flex items-center gap-1 bg-[#161f30] p-1 rounded-lg shrink-0 text-xs font-semibold text-slate-300 border border-slate-700/60">
               <button
                 onClick={() => setStatusFiltro("TODOS")}
-                className={`px-3.5 py-1.5 rounded-lg transition ${
-                  statusFiltro === "TODOS" ? "bg-white text-slate-900 shadow-xs" : "hover:text-slate-900"
+                className={`px-2.5 py-1 rounded-md transition text-xs ${
+                  statusFiltro === "TODOS" ? "bg-slate-800 text-white shadow-xs font-bold" : "hover:text-white"
                 }`}
               >
                 Todos ({ramais.length})
               </button>
               <button
                 onClick={() => setStatusFiltro("ONLINE")}
-                className={`px-3.5 py-1.5 rounded-lg transition flex items-center gap-1.5 ${
-                  statusFiltro === "ONLINE" ? "bg-emerald-600 text-white shadow-xs" : "hover:text-emerald-700"
+                className={`px-2.5 py-1 rounded-md transition flex items-center gap-1 text-xs ${
+                  statusFiltro === "ONLINE" ? "bg-emerald-600 text-white shadow-xs font-bold" : "hover:text-emerald-400"
                 }`}
               >
-                <CheckCircle2 className="w-3.5 h-3.5" />
+                <CheckCircle2 className="w-3 h-3" />
                 Online ({stats.online})
               </button>
               <button
                 onClick={() => setStatusFiltro("OFFLINE")}
-                className={`px-3.5 py-1.5 rounded-lg transition flex items-center gap-1.5 ${
-                  statusFiltro === "OFFLINE" ? "bg-rose-600 text-white shadow-xs" : "hover:text-rose-700"
+                className={`px-2.5 py-1 rounded-md transition flex items-center gap-1 text-xs ${
+                  statusFiltro === "OFFLINE" ? "bg-rose-600 text-white shadow-xs font-bold" : "hover:text-rose-400"
                 }`}
               >
-                <XCircle className="w-3.5 h-3.5" />
+                <XCircle className="w-3 h-3" />
                 Offline ({stats.offline})
               </button>
             </div>
           </div>
 
           {/* Abas de Blocos Hospitalares */}
-          <div className="flex items-center gap-2 overflow-x-auto pt-2 border-t border-slate-100 text-xs scrollbar-none">
-            <span className="text-slate-400 font-semibold flex items-center gap-1 shrink-0 mr-1">
-              <Building2 className="w-3.5 h-3.5" /> Bloco:
+          <div className="flex items-center gap-1.5 overflow-x-auto pt-2 border-t border-slate-800/80 text-xs scrollbar-none">
+            <span className="text-slate-400 font-semibold flex items-center gap-1 shrink-0 mr-1 text-[11px]">
+              <Building2 className="w-3 h-3 text-slate-500" /> Bloco:
             </span>
             {blocosDisponiveis.map((bloco) => {
               const count = bloco === "TODOS" 
@@ -350,10 +377,10 @@ export default function App() {
                 <button
                   key={bloco}
                   onClick={() => setBlocoSelecionado(bloco)}
-                  className={`px-3 py-1 rounded-lg font-medium transition whitespace-nowrap ${
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition whitespace-nowrap ${
                     blocoSelecionado === bloco
-                      ? "bg-slate-900 text-white shadow-xs"
-                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      ? "bg-emerald-600 text-white font-bold shadow-xs"
+                      : "bg-[#161f30] text-slate-300 hover:bg-slate-800 border border-slate-700/60"
                   }`}
                 >
                   {bloco === "TODOS" ? "Todos os Blocos" : bloco} ({count})
@@ -366,14 +393,14 @@ export default function App() {
         {/* Grade de Cartões de Ramais */}
         {loading ? (
           <div className="py-20 text-center">
-            <RefreshCw className="w-8 h-8 text-emerald-600 animate-spin mx-auto mb-2" />
-            <p className="text-sm text-slate-500 font-medium">Carregando ramais VoIP...</p>
+            <RefreshCw className="w-8 h-8 text-emerald-500 animate-spin mx-auto mb-2" />
+            <p className="text-xs text-slate-400 font-medium">Carregando ramais VoIP...</p>
           </div>
         ) : ramaisFiltrados.length === 0 ? (
-          <div className="py-16 text-center bg-white rounded-2xl border border-slate-200 p-8 shadow-xs">
-            <PhoneCall className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-            <h4 className="text-base font-bold text-slate-800">Nenhum ramal encontrado</h4>
-            <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+          <div className="py-14 text-center bg-[#111827] rounded-xl border border-slate-800 p-6 shadow-xs">
+            <PhoneCall className="w-10 h-10 text-slate-600 mx-auto mb-2" />
+            <h4 className="text-sm font-bold text-slate-200">Nenhum ramal encontrado</h4>
+            <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
               Nenhum ramal corresponde aos critérios de busca ou filtros selecionados.
             </p>
             {(busca || blocoSelecionado !== "TODOS" || statusFiltro !== "TODOS") && (
@@ -383,49 +410,67 @@ export default function App() {
                   setBlocoSelecionado("TODOS");
                   setStatusFiltro("TODOS");
                 }}
-                className="mt-4 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition"
+                className="mt-3 px-3 py-1.5 bg-[#161f30] hover:bg-slate-800 text-slate-300 text-xs font-semibold rounded-lg border border-slate-700 transition"
               >
-                Limpar Todos os Filtros
+                Limpar Filtros
               </button>
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {ramaisFiltrados.map((ramal) => (
-              <RamalCard
-                key={ramal.id}
-                ramal={ramal}
-                usuario={usuario}
-                onEdit={(r) => {
-                  executarAcaoSensivel(`Editar Ramal ${r.numero}`, () => {
-                    setRamalEditar(r);
-                    setModalRamalOpen(true);
-                  });
-                }}
-                onDelete={(id) => {
-                  executarAcaoSensivel("Excluir Ramal", () => {
-                    handleExcluirRamal(id);
-                  });
-                }}
-                onPing={handlePingRamal}
-              />
-            ))}
+          <div className="space-y-3">
+            {/* Aviso de Destaque no Topo para Ramais Offline */}
+            {totalOfflineFiltrados > 0 && (
+              <div className="bg-rose-950/40 border border-rose-800/80 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-xs">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-rose-500 offline-badge-blink shrink-0 shadow-xs shadow-rose-500" />
+                  <p className="text-xs text-rose-200 font-medium leading-relaxed">
+                    <strong className="text-rose-400 font-bold">{totalOfflineFiltrados} ramal(is) offline priorizado(s) no topo piscando</strong> para rápida resolução técnica.
+                  </p>
+                </div>
+                <span className="self-start sm:self-auto text-[10px] font-extrabold text-rose-300 bg-rose-950 border border-rose-700 px-2 py-0.5 rounded uppercase tracking-wide shrink-0">
+                  Prioridade NOC
+                </span>
+              </div>
+            )}
+
+            {/* Grid flexível e adaptativa: não corta cards em telas pequenas */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+              {ramaisFiltrados.map((ramal) => (
+                <RamalCard
+                  key={ramal.id}
+                  ramal={ramal}
+                  usuario={usuario}
+                  onEdit={(r) => {
+                    executarAcaoSensivel(`Editar Ramal ${r.numero}`, () => {
+                      setRamalEditar(r);
+                      setModalRamalOpen(true);
+                    });
+                  }}
+                  onDelete={(id) => {
+                    executarAcaoSensivel("Excluir Ramal", () => {
+                      handleExcluirRamal(id);
+                    });
+                  }}
+                  onPing={handlePingRamal}
+                />
+              ))}
+            </div>
           </div>
         )}
       </main>
 
-      {/* Footer corporativo */}
-      <footer className="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-500 mt-10">
+      {/* Footer corporativo Dark */}
+      <footer className="bg-[#0d131f] border-t border-slate-800/80 py-3.5 text-center text-xs text-slate-400 mt-8">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>HAOC VoIP Monitor Enterprise v2.5 • Tecnologia da Informação HAOC</span>
+          <span>HAOC VoIP Enterprise • Hospital Alemão Osvaldo Cruz</span>
           <span>
             {usuario ? (
-              <span className="text-emerald-700 font-semibold">
+              <span className="text-emerald-400 font-semibold">
                 Sessão Autenticada: {usuario.nome} ({usuario.perfil})
               </span>
             ) : (
-              <span className="text-slate-500">
-                Modo Monitoramento Aberto (NOC) • Senha solicitada apenas em alterações
+              <span className="text-slate-400">
+                Modo Monitoramento Aberto (NOC)
               </span>
             )}
           </span>
@@ -462,9 +507,10 @@ export default function App() {
         }}
       />
 
-      <ExeModal
-        isOpen={modalExeOpen}
-        onClose={() => setModalExeOpen(false)}
+      <NetworkModal
+        isOpen={modalNetworkOpen}
+        onClose={() => setModalNetworkOpen(false)}
+        onSyncComplete={carregarDados}
       />
 
       <LoginModal

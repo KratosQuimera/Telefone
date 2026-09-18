@@ -113,6 +113,7 @@ class RamalDialog(QDialog):
         self.btn_cancelar.clicked.connect(self.reject)
 
         self.btn_salvar = QPushButton("Salvar Ramal")
+        self.btn_salvar.setObjectName("btnPrimary")
         self.btn_salvar.clicked.connect(self._salvar)
 
         btn_box.addWidget(self.btn_cancelar)

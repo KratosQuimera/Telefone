@@ -19,8 +19,9 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
+import json
 
-from haoc_voip.core.importer import JSONImporter
+from haoc_voip.core.importer import JSONImporter, exportar_para_json_legado
 from haoc_voip.core.database import db
 from haoc_voip.core.models import Ramal
 
@@ -44,11 +45,24 @@ class ImportDialog(QDialog):
         # Header com seleção de arquivo
         top_bar = QHBoxLayout()
         self.lbl_arquivo = QLabel("Nenhum arquivo JSON selecionado.")
-        self.lbl_arquivo.setStyleSheet("font-weight: 600; color: #64748b;")
+        self.lbl_arquivo.setStyleSheet("font-weight: 700; color: #334155; font-size: 12px;")
         top_bar.addWidget(self.lbl_arquivo)
         top_bar.addStretch()
 
+        btn_modelo = QPushButton("📄 Modelo JSON Oficial")
+        btn_modelo.setObjectName("btnSecondary")
+        btn_modelo.setToolTip("Salvar modelo oficial de JSON com a estrutura por Blocos")
+        btn_modelo.clicked.connect(self._salvar_modelo_json)
+        top_bar.addWidget(btn_modelo)
+
+        btn_exportar = QPushButton("💾 Exportar Base (.json)")
+        btn_exportar.setObjectName("btnSecondary")
+        btn_exportar.setToolTip("Exportar os ramais cadastrados no formato oficial de Blocos")
+        btn_exportar.clicked.connect(self._exportar_base_json)
+        top_bar.addWidget(btn_exportar)
+
         btn_selecionar = QPushButton("📂 Selecionar Arquivo JSON...")
+        btn_selecionar.setObjectName("btnPrimary")
         btn_selecionar.clicked.connect(self._selecionar_arquivo)
         top_bar.addWidget(btn_selecionar)
 
@@ -56,7 +70,7 @@ class ImportDialog(QDialog):
 
         # Resumo das diferenças
         self.lbl_resumo = QLabel("Aguardando carregamento de arquivo.")
-        self.lbl_resumo.setStyleSheet("font-size: 12px; color: #334155; padding: 4px 0;")
+        self.lbl_resumo.setStyleSheet("font-size: 12px; color: #0f172a; padding: 4px 0; font-weight: 600;")
         layout.addWidget(self.lbl_resumo)
 
         # Tabela de Diff
@@ -68,6 +82,7 @@ class ImportDialog(QDialog):
         self.tabela.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.tabela.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
         self.tabela.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.tabela.setAlternatingRowColors(True)
         layout.addWidget(self.tabela)
 
         # Barra inferior
@@ -80,6 +95,7 @@ class ImportDialog(QDialog):
         perfil_u = getattr(self.usuario_atual, "perfil", None) or (self.usuario_atual.get("perfil") if isinstance(self.usuario_atual, dict) else None)
         if perfil_u in ["ADMINISTRADOR", "ANALISTA"]:
             self.btn_aplicar = QPushButton("🚀 Aplicar Alterações Selecionadas")
+            self.btn_aplicar.setObjectName("btnPrimary")
             self.btn_aplicar.setEnabled(False)
             self.btn_aplicar.clicked.connect(self._aplicar_diff)
             bottom_bar.addWidget(self.btn_aplicar)
@@ -228,3 +244,88 @@ class ImportDialog(QDialog):
             self.accept()
         except Exception as exc:
             QMessageBox.critical(self, "Erro na Aplicação", f"Falha ao sincronizar base: {str(exc)}")
+
+    def _salvar_modelo_json(self):
+        caminho, _ = QFileDialog.getSaveFileName(
+            self,
+            "Salvar Modelo JSON Oficial por Blocos",
+            "modelo_ramais_haoc.json",
+            "Arquivos JSON (*.json)"
+        )
+        if not caminho:
+            return
+
+        modelo = {
+            "Bloco A": [
+                {
+                    "Modelo": "Cisco Unified Client Services Framework",
+                    "I.P Cisco": "CSF18982",
+                    "Descrição": "JABBER - Recp_Bl.A - Ouvidoria - 6452",
+                    "I.P": "None"
+                },
+                {
+                    "Modelo": "Cisco 7841",
+                    "I.P Cisco": "SEP2C86D276454B",
+                    "Descrição": "Matriz - 1A Bl.A - Juridico - 0351",
+                    "I.P": "10.192.58.24"
+                }
+            ],
+            "Bloco B": [
+                {
+                    "Modelo": "Cisco 7841",
+                    "I.P Cisco": "SEP2C86D2764624",
+                    "Descrição": "Matriz - 10A_Bl.B - 10B Quarto 1000 - 1000",
+                    "I.P": "10.193.28.25"
+                },
+                {
+                    "Modelo": "Cisco 7841",
+                    "I.P Cisco": "SEP2C3ECF86C880",
+                    "Descrição": "Matriz - 10A_Bl.B - 10B Quarto 1001 - 1001",
+                    "I.P": "10.193.28.130"
+                }
+            ],
+            "Bloco E": [
+                {
+                    "Modelo": "Cisco 7841",
+                    "I.P Cisco": "SEP2C3ECF87F9C5",
+                    "Descrição": "Matriz - 10A_Bl.E - 10E Quarto 1016 - 1016",
+                    "I.P": "10.195.28.91"
+                },
+                {
+                    "Modelo": "Cisco 7841",
+                    "I.P Cisco": "SEP2C3ECF86C4AB",
+                    "Descrição": "Matriz - 10A_Bl.E - 10E Quarto 1017 - 1017",
+                    "I.P": "10.195.28.165"
+                }
+            ]
+        }
+
+        try:
+            with open(caminho, "w", encoding="utf-8") as f:
+                json.dump(modelo, f, indent=2, ensure_ascii=False)
+            QMessageBox.information(self, "Sucesso", f"Modelo oficial salvo com sucesso em:\n{caminho}")
+        except Exception as e:
+            QMessageBox.critical(self, "Erro ao Salvar", f"Não foi possível salvar o modelo:\n{str(e)}")
+
+    def _exportar_base_json(self):
+        caminho, _ = QFileDialog.getSaveFileName(
+            self,
+            "Exportar Base de Ramais em Formato por Blocos",
+            "ramais_haoc_exportados.json",
+            "Arquivos JSON (*.json)"
+        )
+        if not caminho:
+            return
+
+        try:
+            dados = exportar_para_json_legado()
+            with open(caminho, "w", encoding="utf-8") as f:
+                json.dump(dados, f, indent=2, ensure_ascii=False)
+            total = sum(len(v) for v in dados.values())
+            QMessageBox.information(
+                self,
+                "Exportação Concluída",
+                f"Base exportada com sucesso!\n\n• Blocos: {len(dados)}\n• Total de Ramais: {total}\n• Arquivo: {caminho}"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Erro na Exportação", f"Falha ao exportar base:\n{str(e)}")

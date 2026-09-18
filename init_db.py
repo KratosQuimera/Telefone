@@ -67,6 +67,9 @@ def seed_database(criar_dados_demo: bool = True):
         # 4. Blocos e Setores hospitalares
         if criar_dados_demo:
             blocos_info = [
+                ("Bloco A", "#0ea5e9"),
+                ("Bloco B", "#3b82f6"),
+                ("Bloco E", "#6366f1"),
                 ("Bloco Central", "#0284c7"),
                 ("Pronto Socorro", "#dc2626"),
                 ("UTI Geral", "#b91c1c"),
@@ -80,6 +83,12 @@ def seed_database(criar_dados_demo: bool = True):
                     session.add(Bloco(nome=b_nome, cor=cor, ativo=True))
 
             setores_info = [
+                "Ouvidoria",
+                "Juridico",
+                "10B Quarto 1000",
+                "10B Quarto 1001",
+                "10E Quarto 1016",
+                "10E Quarto 1017",
                 "Recepção",
                 "Triagem",
                 "Consultórios",
@@ -100,8 +109,14 @@ def seed_database(criar_dados_demo: bool = True):
 
             session.flush()
 
-            # 5. Ramais VoIP Cisco demonstrativos sincronizados com store.json (13 ramais)
+            # 5. Ramais VoIP Cisco demonstrativos sincronizados com o novo modelo JSON por blocos
             ramais_exemplo = [
+                ("Cisco Unified Client Services Framework", "CSF18982", "JABBER - Recp_Bl.A - Ouvidoria - 6452", None, "Bloco A", "Ouvidoria", "Recepção Bloco A", "NORMAL", "OFFLINE", None),
+                ("Cisco 7841", "2C:86:D2:76:45:4B", "Matriz - 1A Bl.A - Juridico - 0351", "10.192.58.24", "Bloco A", "Juridico", "1A Bloco A", "ALTA", "ONLINE", 11.0),
+                ("Cisco 7841", "2C:86:D2:76:46:24", "Matriz - 10A_Bl.B - 10B Quarto 1000 - 1000", "10.193.28.25", "Bloco B", "10B Quarto 1000", "10A Bloco B Quarto 1000", "NORMAL", "ONLINE", 15.0),
+                ("Cisco 7841", "2C:3E:CF:86:C8:80", "Matriz - 10A_Bl.B - 10B Quarto 1001 - 1001", "10.193.28.130", "Bloco B", "10B Quarto 1001", "10A Bloco B Quarto 1001", "NORMAL", "ONLINE", 13.0),
+                ("Cisco 7841", "2C:3E:CF:87:F9:C5", "Matriz - 10A_Bl.E - 10E Quarto 1016 - 1016", "10.195.28.91", "Bloco E", "10E Quarto 1016", "10A Bloco E Quarto 1016", "NORMAL", "ONLINE", 14.0),
+                ("Cisco 7841", "2C:3E:CF:86:C4:AB", "Matriz - 10A_Bl.E - 10E Quarto 1017 - 1017", "10.195.28.165", "Bloco E", "10E Quarto 1017", "10A Bloco E Quarto 1017", "NORMAL", "ONLINE", 12.0),
                 ("Cisco CP-7841", "00:27:0D:A1:B2:C1", "Ramal 2001 - Recepção Central - Atendimento Geral", "192.168.10.11", "Bloco Central", "Recepção", "Térreo Hall Central", "NORMAL", "ONLINE", 10.0),
                 ("Cisco CP-8841", "00:27:0D:A1:B2:C2", "Ramal 2002 - Triagem Adulto - Emergência", "192.168.10.12", "Pronto Socorro", "Triagem", "Portão PS 24h", "CRITICA", "ONLINE", 15.0),
                 ("Cisco CP-3905", "00:27:0D:A1:B2:C3", "Ramal 2003 - Consultório 01 - Emergência Clínica", "192.168.10.13", "Pronto Socorro", "Consultórios", "Consultório 01", "ALTA", "ONLINE", 5.0),

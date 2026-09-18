@@ -58,6 +58,7 @@ class IncidentesDialog(QDialog):
         top_bar.addWidget(self.cb_status)
 
         btn_filtrar = QPushButton("Filtrar")
+        btn_filtrar.setObjectName("btnPrimary")
         btn_filtrar.clicked.connect(self._carregar_incidentes)
         top_bar.addWidget(btn_filtrar)
 
@@ -81,17 +82,20 @@ class IncidentesDialog(QDialog):
         self.tabela.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
         self.tabela.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.tabela.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.tabela.setAlternatingRowColors(True)
         layout.addWidget(self.tabela)
 
         # Ações inferiores
         bottom_bar = QHBoxLayout()
         self.lbl_total = QLabel("Total de ocorrências: 0")
+        self.lbl_total.setStyleSheet("color: #475569; font-size: 12px; font-weight: 600;")
         bottom_bar.addWidget(self.lbl_total)
         bottom_bar.addStretch()
 
         perfil_u = getattr(self.usuario_atual, "perfil", None) or (self.usuario_atual.get("perfil") if isinstance(self.usuario_atual, dict) else None)
         if perfil_u in ["ADMINISTRADOR", "ANALISTA"]:
             btn_anotar = QPushButton("Anotar Causa no Incidente Selecionado")
+            btn_anotar.setObjectName("btnPrimary")
             btn_anotar.clicked.connect(self._anotar_incidente)
             bottom_bar.addWidget(btn_anotar)
 
