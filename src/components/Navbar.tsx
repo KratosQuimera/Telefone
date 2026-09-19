@@ -10,7 +10,8 @@ import {
   RefreshCw,
   FileText,
   Lock,
-  Unlock
+  Unlock,
+  Terminal
 } from "lucide-react";
 import { Usuario } from "../types";
 
@@ -123,6 +124,16 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <span className="hidden lg:inline">Exportar</span>
               </button>
             )}
+
+            <a
+              href="/api/download-bat"
+              download="criar_executavel_desktop.bat"
+              title="Baixar script .BAT para gerar executável desktop (.EXE)"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#161f30] hover:bg-slate-800 text-slate-200 text-xs font-semibold border border-slate-700 transition shrink-0"
+            >
+              <Terminal className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="hidden xl:inline">Gerar .EXE (.bat)</span>
+            </a>
 
             <button
               onClick={onOpenIncidentes}

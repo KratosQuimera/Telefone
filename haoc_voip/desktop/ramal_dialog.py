@@ -4,6 +4,12 @@ Validações de IPv4, MAC Cisco e unicidade de chaves.
 """
 from __future__ import annotations
 
+import json
+import logging
+from pathlib import Path
+
+logger = logging.getLogger("haoc.ramal_dialog")
+
 from PyQt6.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -23,6 +29,7 @@ from haoc_voip.core.database import db
 from haoc_voip.core.importer import validar_ipv4, normalizar_mac, MAC_CISCO_REGEX
 from haoc_voip.core.audit import registrar_auditoria
 from haoc_voip.core.backup import backup_mgr
+from haoc_voip.core.monitor import executar_ping
 
 
 class RamalDialog(QDialog):
@@ -121,124 +128,365 @@ class RamalDialog(QDialog):
         layout.addLayout(btn_box)
 
     def _carregar_dados(self):
-        with db.session_scope() as session:
-            # Carregar blocos e setores disponíveis
-            blocos = session.query(Bloco).filter(Bloco.ativo == True).order_by(Bloco.nome).all()
-            for b in blocos:
-                self.cb_bloco.addItem(b.nome, b.nome)
+        # Blocos padrão de fallback
+        blocos_padrao = [
+            "Bloco Central",
+            "Pronto Socorro",
+            "UTI Geral",
+            "Centro Cirúrgico",
+            "Maternidade",
+            "Ambulatório",
+            "Administrativo",
+        ]
+        for b in blocos_padrao:
+            self.cb_bloco.addItem(b, b)
 
-            setores = session.query(Setor).filter(Setor.ativo == True).order_by(Setor.nome).all()
-            for s in setores:
-                self.cb_setor.addItem(s.nome, s.nome)
+        # Tentar carregar blocos e setores do banco SQLite
+        try:
+            with db.session_scope() as session:
+                blocos_db = session.query(Bloco).filter(Bloco.ativo == True).order_by(Bloco.nome).all()
+                for b in blocos_db:
+                    if self.cb_bloco.findText(b.nome) < 0:
+                        self.cb_bloco.addItem(b.nome, b.nome)
 
-            if self.ramal_id:
-                ramal = session.query(Ramal).filter(Ramal.id == self.ramal_id).first()
-                if ramal:
-                    self.txt_desc.setText(ramal.descricao)
-                    idx_b = self.cb_bloco.findText(ramal.bloco)
-                    if idx_b >= 0:
-                        self.cb_bloco.setCurrentIndex(idx_b)
+                setores = session.query(Setor).filter(Setor.ativo == True).order_by(Setor.nome).all()
+                for s in setores:
+                    self.cb_setor.addItem(s.nome, s.nome)
+        except Exception as e:
+            logger.warning("Falha ao carregar blocos/setores do SQLite: %s", e)
 
-                    if ramal.setor:
-                        idx_s = self.cb_setor.findText(ramal.setor)
-                        if idx_s >= 0:
-                            self.cb_setor.setCurrentIndex(idx_s)
+        # Se for edição, carregar dados existentes
+        if self.ramal_id:
+            carregou = False
+            # 1. Tentar ler de data/store.json
+            store_p = Path("data/store.json")
+            if store_p.exists():
+                try:
+                    with open(store_p, "r", encoding="utf-8") as f:
+                        d = json.load(f)
+                        for r in d.get("ramais", []):
+                            if r.get("id") == self.ramal_id:
+                                self.txt_desc.setText(str(r.get("descricao") or ""))
+                                idx_b = self.cb_bloco.findText(r.get("bloco") or "Bloco Central")
+                                if idx_b >= 0:
+                                    self.cb_bloco.setCurrentIndex(idx_b)
+                                if r.get("setor"):
+                                    idx_s = self.cb_setor.findText(r.get("setor"))
+                                    if idx_s >= 0:
+                                        self.cb_setor.setCurrentIndex(idx_s)
+                                    else:
+                                        self.cb_setor.addItem(r.get("setor"), r.get("setor"))
+                                        self.cb_setor.setCurrentIndex(self.cb_setor.count() - 1)
+                                self.txt_ip.setText(str(r.get("ip") or ""))
+                                self.txt_mac.setText(str(r.get("mac_cisco") or ""))
+                                self.txt_modelo.setText(str(r.get("modelo") or "Cisco CP-7841"))
+                                carregou = True
+                                break
+                except Exception as e:
+                    logger.warning("Falha ao carregar ramal de store.json: %s", e)
 
-                    self.txt_ip.setText(ramal.ip or "")
-                    self.txt_mac.setText(ramal.mac_cisco or "")
-                    self.txt_modelo.setText(ramal.modelo or "Cisco CP-7821")
-                    idx_c = self.cb_criticidade.findText(ramal.criticidade)
-                    if idx_c >= 0:
-                        self.cb_criticidade.setCurrentIndex(idx_c)
-                    self.txt_localizacao.setText(ramal.localizacao or "")
-                    self.txt_obs.setPlainText(ramal.observacoes or "")
+            # 2. Tentar ler do SQLite para complementar ou como fallback
+            try:
+                with db.session_scope() as session:
+                    ramal = session.query(Ramal).filter(Ramal.id == self.ramal_id).first()
+                    if ramal:
+                        if not carregou:
+                            self.txt_desc.setText(ramal.descricao or "")
+                            idx_b = self.cb_bloco.findText(ramal.bloco or "Bloco Central")
+                            if idx_b >= 0:
+                                self.cb_bloco.setCurrentIndex(idx_b)
+                            if ramal.setor:
+                                idx_s = self.cb_setor.findText(ramal.setor)
+                                if idx_s >= 0:
+                                    self.cb_setor.setCurrentIndex(idx_s)
+                            self.txt_ip.setText(ramal.ip or "")
+                            self.txt_mac.setText(ramal.mac_cisco or "")
+                            self.txt_modelo.setText(ramal.modelo or "Cisco CP-7841")
+
+                        idx_c = self.cb_criticidade.findText(ramal.criticidade or "NORMAL")
+                        if idx_c >= 0:
+                            self.cb_criticidade.setCurrentIndex(idx_c)
+                        self.txt_localizacao.setText(ramal.localizacao or "")
+                        self.txt_obs.setPlainText(ramal.observacoes or "")
+            except Exception as e:
+                logger.warning("Falha ao carregar ramal do SQLite: %s", e)
 
     def _salvar(self):
-        desc = self.txt_desc.text().strip()
-        bloco = self.cb_bloco.currentText().strip()
-        ip = self.txt_ip.text().strip()
-        mac = normalizar_mac(self.txt_mac.text().strip())
-        modelo = self.txt_modelo.text().strip() or "Cisco CP-7821"
-        setor = self.cb_setor.currentData() or None
-        crit = self.cb_criticidade.currentText()
-        loc = self.txt_localizacao.text().strip() or None
-        obs = self.txt_obs.toPlainText().strip() or None
+        try:
+            desc = self.txt_desc.text().strip()
+            bloco = self.cb_bloco.currentText().strip()
+            ip = self.txt_ip.text().strip()
+            mac = normalizar_mac(self.txt_mac.text().strip())
+            modelo = self.txt_modelo.text().strip() or "Cisco CP-7841"
+            setor = self.cb_setor.currentText().strip()
+            if setor == "Sem Setor":
+                setor = "Geral"
+            crit = self.cb_criticidade.currentText()
+            loc = self.txt_localizacao.text().strip() or None
+            obs = self.txt_obs.toPlainText().strip() or None
 
-        if not desc:
-            QMessageBox.warning(self, "Aviso", "A descrição do ramal é obrigatória.")
-            return
+            if not desc:
+                QMessageBox.warning(self, "Aviso", "A descrição do ramal é obrigatória.")
+                return
 
-        if not bloco:
-            QMessageBox.warning(self, "Aviso", "O bloco é obrigatório.")
-            return
+            if not bloco:
+                QMessageBox.warning(self, "Aviso", "O bloco é obrigatório.")
+                return
 
-        if ip and not validar_ipv4(ip):
-            QMessageBox.critical(self, "Erro de Validação", f"O endereço IP '{ip}' não é um IPv4 válido.")
-            return
+            if ip and not validar_ipv4(ip):
+                QMessageBox.critical(self, "Erro de Validação", f"O endereço IP '{ip}' não é um IPv4 válido.")
+                return
 
-        if mac and not MAC_CISCO_REGEX.match(mac):
-            QMessageBox.critical(self, "Erro de Validação", f"O endereço MAC '{mac}' possui formato inválido.")
-            return
+            if mac and not MAC_CISCO_REGEX.match(mac):
+                QMessageBox.critical(self, "Erro de Validação", f"O endereço MAC '{mac}' possui formato inválido.")
+                return
 
-        user_id = self.usuario_atual.id if self.usuario_atual else None
+            # Obter ID e Nome do usuário com segurança sem disparar AttributeError
+            user_id = getattr(self.usuario_atual, "id", None) or (self.usuario_atual.get("id") if isinstance(self.usuario_atual, dict) else 1)
+            user_nome = getattr(self.usuario_atual, "nome", None) or (self.usuario_atual.get("nome") if isinstance(self.usuario_atual, dict) else "Wagner")
 
-        with db.session_scope() as session:
-            # Checar duplicidades
-            if ip:
-                q_ip = session.query(Ramal).filter(Ramal.ip == ip, Ramal.ativo == True)
-                if self.ramal_id:
-                    q_ip = q_ip.filter(Ramal.id != self.ramal_id)
-                dup = q_ip.first()
-                if dup:
-                    QMessageBox.warning(self, "Conflito de IP", f"O IP {ip} já pertence ao ramal '{dup.descricao}'.")
-                    return
+            # 1. Backup preventivo FORA de transações SQLite para evitar deadlocks
+            try:
+                backup_mgr.criar_backup(motivo="pre_salvar_ramal_desktop", usuario_id=user_id)
+            except Exception as e:
+                logger.warning("Não foi possível gerar backup pré-salvamento: %s", e)
 
-            # Backup preventivo
-            backup_mgr.criar_backup(motivo="pre_salvar_ramal_desktop", usuario_id=user_id)
+            # 2. Persistência em SQLite (com proteção contra travamentos)
+            try:
+                with db.session_scope() as session:
+                    if self.ramal_id:
+                        ramal = session.query(Ramal).filter(Ramal.id == self.ramal_id).first()
+                        if ramal:
+                            ramal.ip = ip or None
+                            ramal.mac_cisco = mac or None
+                            ramal.observacoes = obs
+                            ramal.descricao = desc
+                            ramal.bloco = bloco
+                            ramal.setor = setor
+                            ramal.modelo = modelo
+                            ramal.criticidade = crit
+                            ramal.localizacao = loc
+                        else:
+                            novo_r = Ramal(
+                                id=self.ramal_id,
+                                descricao=desc,
+                                bloco=bloco,
+                                setor=setor,
+                                ip=ip or None,
+                                mac_cisco=mac or None,
+                                modelo=modelo,
+                                criticidade=crit,
+                                localizacao=loc,
+                                observacoes=obs,
+                                ativo=True,
+                            )
+                            session.add(novo_r)
+                        acao = "EDITAR_RAMAL_DESKTOP"
+                    else:
+                        ramal = Ramal(
+                            descricao=desc,
+                            bloco=bloco,
+                            setor=setor,
+                            ip=ip or None,
+                            mac_cisco=mac or None,
+                            modelo=modelo,
+                            criticidade=crit,
+                            localizacao=loc,
+                            observacoes=obs,
+                            ativo=True,
+                        )
+                        session.add(ramal)
+                        session.flush()
+                        self.ramal_id = ramal.id
+                        acao = "CRIAR_RAMAL_DESKTOP"
+            except Exception as e:
+                logger.warning("Falha ao salvar ramal no SQLite (mantendo sincronização JSON): %s", e)
 
-            if self.ramal_id:
-                ramal = session.query(Ramal).filter(Ramal.id == self.ramal_id).first()
-                if not ramal:
-                    QMessageBox.critical(self, "Erro", "Ramal não encontrado.")
-                    return
-                ramal.ip = ip or None
-                ramal.mac_cisco = mac or None
-                ramal.observacoes = obs
-                if self.is_admin:
-                    ramal.descricao = desc
-                    ramal.bloco = bloco
-                    ramal.setor = setor
-                    ramal.modelo = modelo
-                    ramal.criticidade = crit
-                    ramal.localizacao = loc
+            # 3. Sincronizar obrigatoriamente no store.json e arquivos de rede JSON
+            self._sincronizar_edicao_json(
+                ramal_id=self.ramal_id,
+                descricao=desc,
+                bloco=bloco,
+                setor=setor,
+                ip=ip,
+                mac=mac,
+                modelo=modelo,
+                usuario_nome=user_nome,
+            )
 
-                acao = "EDITAR_RAMAL_DESKTOP"
-            else:
-                ramal = Ramal(
-                    descricao=desc,
-                    bloco=bloco,
-                    setor=setor,
-                    ip=ip or None,
-                    mac_cisco=mac or None,
-                    modelo=modelo,
-                    criticidade=crit,
-                    localizacao=loc,
-                    observacoes=obs,
-                    ativo=True,
+            # 4. Auditoria não-bloqueante
+            try:
+                registrar_auditoria(
+                    acao="EDITAR_RAMAL_DESKTOP" if self.ramal_id else "CRIAR_RAMAL_DESKTOP",
+                    entidade="ramal",
+                    entidade_id=self.ramal_id,
+                    detalhes={"descricao": desc, "ip": ip, "mac": mac, "bloco": bloco},
+                    usuario_id=user_id,
+                    ip_origem="desktop_client",
                 )
-                session.add(ramal)
-                session.flush()
-                self.ramal_id = ramal.id
-                acao = "CRIAR_RAMAL_DESKTOP"
+            except Exception as e:
+                logger.warning("Auditoria não registrada: %s", e)
 
-        registrar_auditoria(
-            acao=acao,
-            entidade="ramal",
-            entidade_id=self.ramal_id,
-            detalhes={"descricao": desc, "ip": ip, "mac": mac, "bloco": bloco},
-            usuario_id=user_id,
-            ip_origem="desktop_client",
-        )
+            # 5. Testar ping imediatamente após salvar para obter status em tempo real
+            msg_ping = "Ping não configurado (sem IP válido)."
+            if ip and validar_ipv4(ip):
+                try:
+                    sucesso, latencia, erro_ping = executar_ping(ip, timeout_seconds=1.5, retries=1)
+                    if sucesso:
+                        lat_str = f"{latencia:.1f}ms" if latencia else "resposta OK"
+                        msg_ping = f"Ping OK ({lat_str}) - Ramal ONLINE."
+                    else:
+                        msg_ping = f"Sem resposta ao ping ({erro_ping or 'timeout'}) - Ramal OFFLINE."
+                except Exception as p_err:
+                    msg_ping = f"Teste de ping executado com alerta: {p_err}"
 
-        QMessageBox.information(self, "Sucesso", "Ramal salvo com sucesso!")
-        self.accept()
+            QMessageBox.information(
+                self, 
+                "Sucesso", 
+                f"Ramal salvo e sincronizado com sucesso!\n\nStatus do teste de ping:\n{msg_ping}\n\nA lista será atualizada e reordenada conforme o status em ordem alfabética."
+            )
+            self.accept()
+
+        except Exception as exc:
+            logger.error("Erro fatal ao salvar ramal no desktop: %s", exc, exc_info=True)
+            QMessageBox.critical(self, "Erro ao Salvar", f"Ocorreu um erro ao salvar o ramal:\n{exc}")
+
+    def _sincronizar_edicao_json(
+        self,
+        ramal_id: int | None,
+        descricao: str,
+        bloco: str,
+        setor: str,
+        ip: str,
+        mac: str,
+        modelo: str,
+        usuario_nome: str,
+    ):
+        """Garante que a edição modifique imediatamente o store.json e arquivos da rede."""
+        import os
+        import re
+
+        numero_extraido = ""
+        m = re.search(r"\b(\d{3,5})\b", descricao)
+        if m:
+            numero_extraido = m.group(1)
+
+        store_p = Path("data/store.json")
+        if store_p.exists():
+            try:
+                with open(store_p, "r", encoding="utf-8") as f:
+                    d = json.load(f)
+                ramais = d.get("ramais", [])
+                achou = False
+                for r in ramais:
+                    if (ramal_id and r.get("id") == ramal_id) or (numero_extraido and str(r.get("numero") or "") == numero_extraido):
+                        r["descricao"] = descricao
+                        r["bloco"] = bloco
+                        r["setor"] = setor
+                        r["ip"] = ip
+                        r["mac_cisco"] = mac
+                        r["modelo"] = modelo
+                        if numero_extraido:
+                            r["numero"] = numero_extraido
+                        achou = True
+                        break
+
+                if not achou:
+                    max_id = max([r.get("id", 100) for r in ramais], default=100)
+                    novo_id = ramal_id or (max_id + 1)
+                    novo_obj = {
+                        "id": novo_id,
+                        "numero": numero_extraido or str(novo_id),
+                        "descricao": descricao,
+                        "bloco": bloco,
+                        "setor": setor,
+                        "ip": ip or "192.168.10.100",
+                        "mac_cisco": mac or "00:27:0D:00:00:00",
+                        "modelo": modelo or "Cisco CP-7841",
+                        "status": "ONLINE" if ip else "OFFLINE",
+                        "latencia_ms": 15,
+                        "ultimo_ping": None,
+                        "ativo": True,
+                    }
+                    ramais.append(novo_obj)
+                    d["ramais"] = ramais
+
+                with open(store_p, "w", encoding="utf-8") as f:
+                    json.dump(d, f, indent=2, ensure_ascii=False)
+            except Exception as e:
+                logger.warning("Falha ao sincronizar edição no store.json: %s", e)
+
+        # Atualizar também no modelo_ramais_haoc.json e qualquer arquivo na pasta de rede
+        candidatos = [
+            Path("data/modelo_ramais_haoc.json"),
+            Path("data/sample_legacy_data.json"),
+        ]
+        cfg_path = Path("data/network_config.json")
+        if cfg_path.exists():
+            try:
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                    c_rede = cfg.get("caminho_rede", "")
+                    if c_rede:
+                        p_rede = Path(c_rede)
+                        if p_rede.is_dir():
+                            for jf in p_rede.glob("*.json"):
+                                candidatos.append(jf)
+                        elif p_rede.is_file():
+                            candidatos.append(p_rede)
+            except Exception:
+                pass
+
+        for c in candidatos:
+            if c.exists() and c.is_file():
+                try:
+                    with open(c, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    modificou = False
+
+                    def atualizar_item(item):
+                        nonlocal modificou
+                        if not isinstance(item, dict):
+                            return
+                        num_item = str(item.get("numero") or item.get("Numero") or "").strip()
+                        id_item = item.get("id")
+                        if (ramal_id and id_item == ramal_id) or (numero_extraido and num_item == numero_extraido):
+                            modificou = True
+                            if "Descricao" in item: item["Descricao"] = descricao
+                            elif "Descrição" in item: item["Descrição"] = descricao
+                            else: item["descricao"] = descricao
+
+                            if "IP" in item: item["IP"] = ip
+                            elif "I.P" in item: item["I.P"] = ip
+                            else: item["ip"] = ip
+
+                            if "Bloco" in item: item["Bloco"] = bloco
+                            else: item["bloco"] = bloco
+
+                            if "Setor" in item: item["Setor"] = setor
+                            else: item["setor"] = setor
+
+                            if "MAC" in item: item["MAC"] = mac
+                            else: item["mac_cisco"] = mac
+
+                            if "Modelo" in item: item["Modelo"] = modelo
+                            else: item["modelo"] = modelo
+
+                    if isinstance(data, list):
+                        for item in data:
+                            atualizar_item(item)
+                    elif isinstance(data, dict):
+                        if "ramais" in data and isinstance(data["ramais"], list):
+                            for item in data["ramais"]:
+                                atualizar_item(item)
+                        else:
+                            for k, v in data.items():
+                                if isinstance(v, list):
+                                    for item in v:
+                                        atualizar_item(item)
+
+                    if modificou:
+                        with open(c, "w", encoding="utf-8") as f:
+                            json.dump(data, f, indent=2, ensure_ascii=False)
+                except Exception as e:
+                    logger.warning("Falha ao atualizar JSON externo %s: %s", c, e)

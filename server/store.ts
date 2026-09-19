@@ -540,6 +540,7 @@ class Store {
   }
 
   public getStats() {
+    this.reloadIfChanged();
     const ramaisAtivos = this.data.ramais.filter((r) => r.ativo);
     const total = ramaisAtivos.length;
     const online = ramaisAtivos.filter((r) => r.status === "ONLINE").length;
@@ -569,6 +570,7 @@ class Store {
   }
 
   public getRamais(filtro?: { bloco?: string; status?: string; search?: string }) {
+    this.reloadIfChanged();
     let result = this.data.ramais.filter((r) => r.ativo);
     if (filtro?.bloco && filtro.bloco !== "TODOS") {
       result = result.filter((r) => r.bloco === filtro.bloco);
@@ -607,49 +609,416 @@ class Store {
   }
 
   public salvarRamal(novoRamal: Partial<Ramal>, usuarioNome: string): Ramal {
+    let salvo: Ramal;
+
     if (novoRamal.id) {
       const idx = this.data.ramais.findIndex((r) => r.id === novoRamal.id);
       if (idx >= 0) {
         this.data.ramais[idx] = {
           ...this.data.ramais[idx],
           ...novoRamal,
+          numero: String(novoRamal.numero || this.data.ramais[idx].numero).trim(),
+          descricao: String(novoRamal.descricao || this.data.ramais[idx].descricao).trim(),
         } as Ramal;
-        this.addLog(usuarioNome, "RAMAL_ATUALIZADO", `Ramal ${this.data.ramais[idx].numero} editado.`);
+        salvo = this.data.ramais[idx];
+        this.addLog(usuarioNome, "RAMAL_ATUALIZADO", `Ramal ${salvo.numero} (${salvo.descricao}) editado.`);
         this.save();
-        return this.data.ramais[idx];
+      } else {
+        const criado: Ramal = {
+          id: novoRamal.id,
+          numero: String(novoRamal.numero || "2000").trim(),
+          descricao: String(novoRamal.descricao || "Novo Ramal VoIP").trim(),
+          bloco: novoRamal.bloco || "Bloco Central",
+          setor: novoRamal.setor || "Geral",
+          ip: novoRamal.ip || "192.168.10.100",
+          mac_cisco: novoRamal.mac_cisco || "00:27:0D:00:00:00",
+          modelo: novoRamal.modelo || "Cisco CP-7841",
+          status: "ONLINE",
+          latencia_ms: 15,
+          ultimo_ping: new Date().toISOString(),
+          ativo: true,
+          criado_em: new Date().toISOString(),
+        };
+        this.data.ramais.push(criado);
+        salvo = criado;
+        this.addLog(usuarioNome, "RAMAL_CRIADO", `Novo ramal ${criado.numero} cadastrado no setor ${criado.setor}.`);
+        this.save();
       }
+    } else {
+      const maxId = this.data.ramais.reduce((acc, curr) => Math.max(acc, curr.id), 100);
+      const criado: Ramal = {
+        id: maxId + 1,
+        numero: String(novoRamal.numero || "2000").trim(),
+        descricao: String(novoRamal.descricao || "Novo Ramal VoIP").trim(),
+        bloco: novoRamal.bloco || "Bloco Central",
+        setor: novoRamal.setor || "Geral",
+        ip: novoRamal.ip || "192.168.10.100",
+        mac_cisco: novoRamal.mac_cisco || "00:27:0D:00:00:00",
+        modelo: novoRamal.modelo || "Cisco CP-7841",
+        status: "ONLINE",
+        latencia_ms: 15,
+        ultimo_ping: new Date().toISOString(),
+        ativo: true,
+        criado_em: new Date().toISOString(),
+      };
+      this.data.ramais.push(criado);
+      salvo = criado;
+      this.addLog(usuarioNome, "RAMAL_CRIADO", `Novo ramal ${criado.numero} cadastrado no setor ${criado.setor}.`);
+      this.save();
     }
-    const maxId = this.data.ramais.reduce((acc, curr) => Math.max(acc, curr.id), 100);
-    const criado: Ramal = {
-      id: maxId + 1,
-      numero: novoRamal.numero || "2000",
-      descricao: novoRamal.descricao || "Novo Ramal VoIP",
-      bloco: novoRamal.bloco || "Bloco Central",
-      setor: novoRamal.setor || "Geral",
-      ip: novoRamal.ip || "192.168.10.100",
-      mac_cisco: novoRamal.mac_cisco || "00:27:0D:00:00:00",
-      modelo: novoRamal.modelo || "Cisco CP-7841",
-      status: "ONLINE",
-      latencia_ms: 15,
-      ultimo_ping: new Date().toISOString(),
-      ativo: true,
-      criado_em: new Date().toISOString(),
-    };
-    this.data.ramais.push(criado);
-    this.addLog(usuarioNome, "RAMAL_CRIADO", `Novo ramal ${criado.numero} cadastrado no setor ${criado.setor}.`);
-    this.save();
-    return criado;
+
+    // Sincronizar edição nos arquivos JSON externos (modelo_ramais_haoc.json e pasta de rede)
+    try {
+      const arquivosCandidatos: string[] = [
+        path.join(DATA_DIR, "modelo_ramais_haoc.json"),
+        path.join(DATA_DIR, "sample_legacy_data.json"),
+      ];
+      if (this.networkConfig.caminho_rede) {
+        const caminho = this.networkConfig.caminho_rede.trim();
+        if (fs.existsSync(caminho)) {
+          const st = fs.statSync(caminho);
+          if (st.isDirectory()) {
+            const files = fs.readdirSync(caminho).filter((f) => f.toLowerCase().endsWith(".json"));
+            for (const f of files) arquivosCandidatos.push(path.join(caminho, f));
+          } else if (st.isFile()) {
+            arquivosCandidatos.push(caminho);
+          }
+        }
+      }
+      for (const arq of Array.from(new Set(arquivosCandidatos))) {
+        if (fs.existsSync(arq) && fs.statSync(arq).isFile()) {
+          this.atualizarRamalEmArquivoJson(arq, salvo);
+        }
+      }
+    } catch (syncErr) {
+      console.warn("[Store] Erro ao sincronizar edição nos arquivos JSON:", syncErr);
+    }
+
+    // Testar ping imediatamente após a edição/criação do ramal
+    try {
+      this.pingRamal(salvo.id);
+      const atualizado = this.data.ramais.find((r) => r.id === salvo.id);
+      if (atualizado) {
+        salvo = { ...atualizado };
+      }
+    } catch (pingErr) {
+      console.warn("[Store] Erro ao testar ping pós-edição:", pingErr);
+    }
+
+    return salvo;
+  }
+
+  /**
+   * Atualiza os campos de um ramal dentro de um arquivo JSON estruturado
+   */
+  private atualizarRamalEmArquivoJson(filePath: string, ramal: Ramal): boolean {
+    try {
+      const raw = fs.readFileSync(filePath, "utf-8");
+      const data = JSON.parse(raw);
+      let houveAlteracao = false;
+
+      const numeroAlvo = String(ramal.numero || "").trim();
+      const idAlvo = ramal.id;
+
+      const updateItem = (item: any) => {
+        if (!item || typeof item !== "object") return;
+        const itemNum = String(item.numero || item.Numero || "").trim();
+        const itemId = item.id;
+        if ((idAlvo && itemId === idAlvo) || (numeroAlvo && itemNum === numeroAlvo)) {
+          houveAlteracao = true;
+          if ("Numero" in item) item.Numero = ramal.numero;
+          else item.numero = ramal.numero;
+
+          if ("Descricao" in item) item.Descricao = ramal.descricao;
+          else if ("Descrição" in item) item["Descrição"] = ramal.descricao;
+          else item.descricao = ramal.descricao;
+
+          if ("IP" in item) item.IP = ramal.ip;
+          else if ("I.P" in item) item["I.P"] = ramal.ip;
+          else item.ip = ramal.ip;
+
+          if ("Bloco" in item) item.Bloco = ramal.bloco;
+          else item.bloco = ramal.bloco;
+
+          if ("Setor" in item) item.Setor = ramal.setor;
+          else item.setor = ramal.setor;
+
+          if ("MAC" in item) item.MAC = ramal.mac_cisco;
+          else item.mac_cisco = ramal.mac_cisco;
+
+          if ("Modelo" in item) item.Modelo = ramal.modelo;
+          else item.modelo = ramal.modelo;
+        }
+      };
+
+      if (Array.isArray(data)) {
+        data.forEach(updateItem);
+      } else if (typeof data === "object" && data !== null) {
+        if (Array.isArray(data.ramais)) {
+          data.ramais.forEach(updateItem);
+        } else {
+          for (const k of Object.keys(data)) {
+            if (Array.isArray(data[k])) {
+              data[k].forEach(updateItem);
+            }
+          }
+        }
+      }
+
+      if (houveAlteracao) {
+        fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+      }
+      return houveAlteracao;
+    } catch (e) {
+      console.warn(`[Store] Falha ao atualizar ramal no JSON ${filePath}:`, e);
+      return false;
+    }
   }
 
   public desativarRamal(id: number, usuarioNome: string): boolean {
-    const r = this.data.ramais.find((x) => x.id === id);
-    if (r) {
-      r.ativo = false;
-      this.addLog(usuarioNome, "RAMAL_EXCLUIDO", `Ramal ${r.numero} (${r.descricao}) removido.`);
-      this.save();
-      return true;
+    const res = this.excluirRamal(id, usuarioNome);
+    return res.sucesso;
+  }
+
+  /**
+   * Remove o ramal permanentemente e atualiza todos os arquivos JSON no disco:
+   * 1. Remove da base store.json
+   * 2. Remove de data/modelo_ramais_haoc.json (se existir)
+   * 3. Remove do arquivo ou pasta configurada em networkConfig.caminho_rede
+   * 4. Remove de data/sample_legacy_data.json (se existir)
+   * 5. Remove incidentes associados em aberto
+   */
+  public reloadIfChanged() {
+    try {
+      if (fs.existsSync(DB_PATH)) {
+        const raw = fs.readFileSync(DB_PATH, "utf-8");
+        const parsed = JSON.parse(raw);
+        if (parsed && Array.isArray(parsed.ramais)) {
+          this.data = parsed;
+        }
+      }
+    } catch (e) {
+      // Ignorar erros transitórios de leitura concorrente
     }
-    return false;
+  }
+
+  public excluirRamal(id: number | string, usuarioNome: string, ramalExtra?: Partial<Ramal>): { sucesso: boolean; ramal?: Ramal; arquivosModificados: string[] } {
+    this.reloadIfChanged();
+
+    const targetIdStr = String(id).trim();
+    const extraNumStr = ramalExtra?.numero ? String(ramalExtra.numero).trim() : "";
+    const extraDescStr = ramalExtra?.descricao ? String(ramalExtra.descricao).toLowerCase().trim() : "";
+    const extraIpStr = ramalExtra?.ip ? String(ramalExtra.ip).trim() : "";
+
+    let idx = this.data.ramais.findIndex((x) => {
+      if (String(x.id).trim() === targetIdStr) return true;
+      if (String(x.numero).trim() === targetIdStr) return true;
+      if (extraNumStr && String(x.numero).trim() === extraNumStr) return true;
+      if (extraDescStr && String(x.descricao).toLowerCase().trim() === extraDescStr) return true;
+      if (extraIpStr && extraIpStr !== "" && extraIpStr.toLowerCase() !== "none" && String(x.ip).trim() === extraIpStr) return true;
+      return false;
+    });
+
+    let ramalRemovido: Ramal;
+    if (idx !== -1) {
+      ramalRemovido = this.data.ramais[idx];
+    } else {
+      ramalRemovido = {
+        id: Number(id) || 9999,
+        numero: extraNumStr || String(id),
+        descricao: ramalExtra?.descricao || "",
+        bloco: ramalExtra?.bloco || "Geral",
+        setor: ramalExtra?.setor || "Geral",
+        ip: extraIpStr || "",
+        mac_cisco: ramalExtra?.mac_cisco || "",
+        modelo: ramalExtra?.modelo || "Cisco 7841",
+        status: "OFFLINE",
+        latencia_ms: null,
+        ultimo_ping: null,
+        ativo: false,
+        criado_em: new Date().toISOString(),
+      };
+    }
+
+    // 1. Remover da lista do store.json todas as ocorrências correspondentes
+    const numAlvo = (ramalRemovido.numero || "").trim();
+    const descAlvo = (ramalRemovido.descricao || "").toLowerCase().trim();
+    this.data.ramais = this.data.ramais.filter((x) => {
+      if (String(x.id).trim() === targetIdStr) return false;
+      if (numAlvo && String(x.numero).trim() === numAlvo) return false;
+      if (descAlvo && String(x.descricao).toLowerCase().trim() === descAlvo) return false;
+      return true;
+    });
+    this.save();
+
+    // 2. Limpar incidentes associados em aberto
+    const numId = Number(id);
+    if (!isNaN(numId)) {
+      this.data.incidentes = this.data.incidentes.filter((i) => i.ramal_id !== numId);
+      this.save();
+    }
+
+    const arquivosModificados: string[] = ["data/store.json"];
+
+    // 3. Atualizar arquivos JSON externos e configurados
+    const arquivosCandidatos: string[] = [
+      path.join(DATA_DIR, "modelo_ramais_haoc.json"),
+      path.join(DATA_DIR, "sample_legacy_data.json"),
+    ];
+
+    if (this.networkConfig.caminho_rede) {
+      const caminho = this.networkConfig.caminho_rede.trim();
+      if (fs.existsSync(caminho)) {
+        try {
+          const st = fs.statSync(caminho);
+          if (st.isDirectory()) {
+            const files = fs.readdirSync(caminho).filter((f) => f.toLowerCase().endsWith(".json"));
+            for (const f of files) {
+              arquivosCandidatos.push(path.join(caminho, f));
+            }
+          } else if (st.isFile()) {
+            arquivosCandidatos.push(caminho);
+          }
+        } catch (e) {
+          console.warn("[Store] Erro ao inspecionar caminho de rede:", e);
+        }
+      }
+    }
+
+    const uniqueFiles = Array.from(new Set(arquivosCandidatos));
+    for (const filePath of uniqueFiles) {
+      try {
+        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+          const modificado = this.removerRamalDeArquivoJson(filePath, ramalRemovido);
+          if (modificado) {
+            arquivosModificados.push(filePath);
+          }
+        }
+      } catch (err) {
+        console.warn(`[Store] Falha ao atualizar JSON ${filePath}:`, err);
+      }
+    }
+
+    this.addLog(
+      usuarioNome,
+      "RAMAL_EXCLUIDO",
+      `Ramal ${ramalRemovido.numero} (${ramalRemovido.descricao}) excluído permanentemente. Arquivos JSON atualizados: ${arquivosModificados.join(", ")}.`
+    );
+
+    return { sucesso: true, ramal: ramalRemovido, arquivosModificados };
+  }
+
+  /**
+   * Localiza e remove o ramal de um arquivo JSON estruturado (seja por blocos, lista ou ramais: [])
+   */
+  private removerRamalDeArquivoJson(filePath: string, ramal: Ramal): boolean {
+    try {
+      const raw = fs.readFileSync(filePath, "utf-8");
+      const data = JSON.parse(raw);
+      let houveAlteracao = false;
+
+      const numeroAlvo = (ramal.numero || "").trim();
+      const descAlvo = (ramal.descricao || "").toLowerCase().trim();
+      const ipAlvo = (ramal.ip || "").trim();
+      const macAlvo = (ramal.mac_cisco || "").trim().toLowerCase();
+
+      const itemMatches = (item: any): boolean => {
+        if (!item || typeof item !== "object") return false;
+        if (item.id !== undefined && ramal.id !== undefined && String(item.id) === String(ramal.id)) return true;
+
+        const itemNum = String(item.numero || item.Numero || "").trim();
+        const itemDesc = String(item.descricao || item.Descricao || item["Descrição"] || "").toLowerCase().trim();
+        const itemIp = String(item.ip || item.IP || item["I.P"] || "").trim();
+        const itemMac = String(item.mac_cisco || item.MAC || item["I.P Cisco"] || "").trim().toLowerCase();
+
+        // 1. Número exato correspondente
+        if (numeroAlvo && itemNum && itemNum === numeroAlvo) return true;
+        // 2. Descrição exata correspondente
+        if (descAlvo && itemDesc && itemDesc === descAlvo) return true;
+        // 3. Número com limite de palavra ou sufixo
+        if (numeroAlvo) {
+          if (itemDesc.endsWith(`- ${numeroAlvo}`) || itemDesc.endsWith(` ${numeroAlvo}`) || itemDesc.startsWith(`${numeroAlvo} -`)) return true;
+          try {
+            if (new RegExp(`\\b${numeroAlvo}\\b`).test(itemDesc)) return true;
+          } catch {
+            if (itemDesc.includes(numeroAlvo)) return true;
+          }
+        }
+        // 4. IP IPv4 correspondente quando não vazio
+        if (ipAlvo && ipAlvo.toLowerCase() !== "none" && ipAlvo !== "" && itemIp && itemIp === ipAlvo) return true;
+        // 5. MAC Cisco correspondente quando informado
+        if (macAlvo && macAlvo !== "-") {
+          const m1 = macAlvo.replace(/[^a-z0-9]/g, "");
+          const m2 = itemMac.replace(/[^a-z0-9]/g, "");
+          if (m1 && m2 && (m1.includes(m2) || m2.includes(m1))) return true;
+        }
+
+        return false;
+      };
+
+      if (Array.isArray(data)) {
+        const antes = data.length;
+        const filtrado = data.filter((item) => !itemMatches(item));
+        if (filtrado.length !== antes) {
+          houveAlteracao = true;
+          fs.writeFileSync(filePath, JSON.stringify(filtrado, null, 2), "utf-8");
+        }
+      } else if (typeof data === "object" && data !== null) {
+        if (Array.isArray(data.ramais)) {
+          const antes = data.ramais.length;
+          data.ramais = data.ramais.filter((item: any) => !itemMatches(item));
+          if (data.ramais.length !== antes) {
+            houveAlteracao = true;
+            fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+          }
+        } else {
+          // Estrutura por blocos: { "Bloco A": [ ... ], "Bloco B": [ ... ] }
+          for (const blocoKey of Object.keys(data)) {
+            if (Array.isArray(data[blocoKey])) {
+              const antes = data[blocoKey].length;
+              data[blocoKey] = data[blocoKey].filter((item: any) => !itemMatches(item));
+              if (data[blocoKey].length !== antes) {
+                houveAlteracao = true;
+              }
+            }
+          }
+          if (houveAlteracao) {
+            fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+          }
+        }
+      }
+
+      return houveAlteracao;
+    } catch (e) {
+      console.warn(`[Store] Erro ao remover ramal do JSON ${filePath}:`, e);
+      return false;
+    }
+  }
+
+  public pingLote(ids: number[]): Array<{ id: number; status: string; latencia_ms: number | null }> {
+    const resultados: Array<{ id: number; status: string; latencia_ms: number | null }> = [];
+    const ativos = this.data.ramais.filter((r) => r.ativo && ids.includes(r.id));
+
+    for (const r of ativos) {
+      const rdn = Math.random();
+      if (rdn < 0.90) {
+        r.status = "ONLINE";
+        r.latencia_ms = Math.floor(Math.random() * 20) + 5;
+      } else {
+        r.status = "OFFLINE";
+        r.latencia_ms = null;
+      }
+      r.ultimo_ping = new Date().toISOString();
+      this.checkIncidente(r);
+      resultados.push({
+        id: r.id,
+        status: r.status,
+        latencia_ms: r.latencia_ms,
+      });
+    }
+
+    this.save();
+    return resultados;
   }
 
   public pingRamal(id: number): { status: string; latencia_ms: number } {

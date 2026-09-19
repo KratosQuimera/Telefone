@@ -49,24 +49,70 @@ async function startServer() {
 
   // Salvar ou Atualizar Ramal
   app.post("/api/ramais", (req, res) => {
-    const { ramal, usuario_nome } = req.body;
-    if (!ramal || !ramal.numero || !ramal.descricao) {
-      return res.status(400).json({ erro: "Número e descrição são obrigatórios." });
+    let ramal = req.body?.ramal || req.body;
+    const usuario_nome = req.body?.usuario_nome || "Wagner";
+    if (!ramal || typeof ramal !== "object") {
+      return res.status(400).json({ erro: "Dados do ramal inválidos." });
     }
-    const salvo = store.salvarRamal(ramal, usuario_nome || "Wagner");
-    res.json(salvo);
+    if (!ramal.numero && ramal.descricao) {
+      const match = String(ramal.descricao).match(/\b(\d{3,5})\b/);
+      if (match) {
+        ramal.numero = match[1];
+      } else if (ramal.id) {
+        ramal.numero = String(ramal.id);
+      }
+    }
+    if (!ramal.descricao) {
+      return res.status(400).json({ erro: "Descrição do ramal é obrigatória." });
+    }
+    if (!ramal.numero) {
+      ramal.numero = String(ramal.id || "1000");
+    }
+    const salvo = store.salvarRamal(ramal, usuario_nome);
+    const ramaisAtualizados = store.getRamais();
+    const statsAtualizados = store.getStats();
+
+    res.json({
+      ...salvo,
+      ramal: salvo,
+      ramais: ramaisAtualizados,
+      stats: statsAtualizados,
+      mensagem: `Ramal ${salvo.numero} salvo com sucesso. Ping testado: status ${salvo.status} (${salvo.latencia_ms ? salvo.latencia_ms + "ms" : "sem resposta"}).`,
+    });
   });
 
-  // Desativar Ramal
+  // Excluir Ramal e atualizar arquivos JSON
   app.delete("/api/ramais/:id", (req, res) => {
-    const id = parseInt(req.params.id, 10);
-    const usuario_nome = (req.query.usuario_nome as string) || "Wagner";
-    const ok = store.desativarRamal(id, usuario_nome);
-    if (ok) {
-      res.json({ sucesso: true });
-    } else {
-      res.status(404).json({ erro: "Ramal não encontrado." });
+    const rawId = req.params.id;
+    const numId = parseInt(rawId, 10);
+    const idToUse = isNaN(numId) ? rawId : numId;
+    const usuario_nome = (req.query.usuario_nome as string) || (req.body && req.body.usuario_nome) || "Wagner";
+    const resultado = store.excluirRamal(idToUse, usuario_nome, req.body);
+
+    const ramaisAtualizados = store.getRamais();
+    const statsAtualizados = store.getStats();
+
+    res.json({
+      sucesso: true,
+      mensagem: `Ramal ${resultado.ramal?.numero || rawId} excluído com sucesso e arquivos JSON sincronizados.`,
+      ramais: ramaisAtualizados,
+      stats: statsAtualizados,
+      arquivosModificados: resultado.arquivosModificados || [],
+    });
+  });
+
+  // Ping em Lotes (Dividido para não sobrecarregar CPU e memória)
+  app.post("/api/ramais/ping-lote", (req, res) => {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ erro: "Lista de IDs ('ids') é obrigatória para ping em lote." });
     }
+    const resultados = store.pingLote(ids);
+    res.json({
+      sucesso: true,
+      processados: resultados.length,
+      resultados,
+    });
   });
 
   // Ping Individual
@@ -164,6 +210,17 @@ async function startServer() {
       return res.sendFile(modeloPath);
     }
     res.json(store.exportarJsonModelo());
+  });
+
+  // Download do arquivo .bat para criar executável Windows
+  app.get("/api/download-bat", (_req, res) => {
+    const batPath = path.join(process.cwd(), "criar_executavel_desktop.bat");
+    if (fs.existsSync(batPath)) {
+      res.setHeader("Content-Disposition", "attachment; filename=criar_executavel_desktop.bat");
+      res.setHeader("Content-Type", "application/x-bat");
+      return res.sendFile(batPath);
+    }
+    res.status(404).send("Arquivo .bat não encontrado");
   });
 
   // --- VITE MIDDLEWARE SETUP ---

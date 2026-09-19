@@ -177,11 +177,12 @@ class RamalCard(QFrame):
 
         main_layout.addLayout(header_layout)
 
-        # 2. Descrição
+        # 2. Descrição (Exibição completa sem cortes, fonte proporcional para manter o tamanho exato dos cards)
         lbl_desc = QLabel(desc_full)
-        lbl_desc.setStyleSheet("color: #e2e8f0; font-size: 12px; font-weight: 600; border: none; background: transparent;")
+        tam_fonte = 9 if len(desc_full) > 42 else (10 if len(desc_full) > 25 else 11)
+        lbl_desc.setStyleSheet(f"color: #e2e8f0; font-size: {tam_fonte}px; font-weight: 600; border: none; background: transparent;")
         lbl_desc.setWordWrap(True)
-        lbl_desc.setMinimumHeight(20)
+        lbl_desc.setFixedHeight(46)
         main_layout.addWidget(lbl_desc)
 
         # 3. Caixa Detalhes Técnicos Compacta 2x2
@@ -298,7 +299,7 @@ class MainWindow(QMainWindow):
     Apresenta design idêntico ao painel NOC Web:
     - Navbar superior dark (#0f172a) com logotipo verde e ações rápidas
     - Perfil autenticado Wagner (Administrador Master) ativo com botão Bloquear
-    - Hero banner escuro do Hospital com botão de acesso ao executável .EXE
+    - Hero banner escuro do Hospital com botão de sincronização de Pasta de Rede
     - 5 KPI Cards em tempo real (Total, Online, Offline, SLA, Incidentes)
     - Card de busca e filtros de status e blocos
     - Banner de alerta para ramais offline priorizados no topo piscando
@@ -1268,18 +1269,175 @@ class MainWindow(QMainWindow):
             self._carregar_dados_interface()
 
     def solicitar_exclusao_ramal(self, ramal_id: int):
-        self._executar_acao_sensivel(
-            f"Excluir Ramal #{ramal_id}",
-            lambda: self._confirmar_exclusao_ramal(ramal_id)
-        )
+        self._confirmar_exclusao_ramal(ramal_id)
 
     def _confirmar_exclusao_ramal(self, ramal_id: int):
-        if QMessageBox.question(self, "Confirmar", f"Deseja remover o ramal #{ramal_id} do monitoramento?") == QMessageBox.StandardButton.Yes:
-            with db.session_scope() as session:
-                r = session.query(Ramal).filter(Ramal.id == ramal_id).first()
-                if r:
-                    r.ativo = False
+        # 1. Obter dados completos do ramal da lista atual da UI ou do SQLite
+        ramal_alvo = next((r for r in self.todos_os_ramais if r.get("id") == ramal_id), None)
+
+        num_ramal = str(ramal_id)
+        desc_ramal = ""
+        ip_ramal = ""
+        mac_ramal = ""
+
+        if ramal_alvo:
+            num_ramal = str(ramal_alvo.get("numero") or ramal_id)
+            desc_ramal = str(ramal_alvo.get("descricao") or "")
+            ip_ramal = str(ramal_alvo.get("ip") or "")
+            mac_ramal = str(ramal_alvo.get("mac_cisco") or "")
+        else:
+            try:
+                with db.session_scope() as session:
+                    r = session.query(Ramal).filter(Ramal.id == ramal_id).first()
+                    if r:
+                        num_ramal = r.numero or str(ramal_id)
+                        desc_ramal = r.descricao or ""
+                        ip_ramal = r.ip or ""
+                        mac_ramal = r.mac_cisco or ""
+            except Exception as e:
+                logger.warning("Falha ao consultar ramal no SQLite: %s", e)
+
+        msg = (
+            f"Deseja realmente EXCLUIR o ramal #{num_ramal} ({desc_ramal})?\n\n"
+            "Atenção: Esta ação removerá o ramal da base e atualizará "
+            "automaticamente todos os arquivos JSON locais e na pasta de rede."
+        )
+
+        resposta = QMessageBox.question(
+            self,
+            "Confirmar Exclusão de Ramal",
+            msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if resposta == QMessageBox.StandardButton.Yes:
+            # 1. Remover da lista em memória imediatamente para atualização instantânea
+            self.todos_os_ramais = [
+                r for r in self.todos_os_ramais
+                if r.get("id") != ramal_id and str(r.get("numero") or "") != num_ramal
+            ]
+
+            # 2. Remover da base SQLite se presente
+            try:
+                with db.session_scope() as session:
+                    r = session.query(Ramal).filter(Ramal.id == ramal_id).first()
+                    if r:
+                        session.delete(r)
+            except Exception as e:
+                logger.warning("Falha ao remover ramal do SQLite: %s", e)
+
+            # 3. Modificar arquivos JSON no disco e na rede
+            self._remover_ramal_arquivos_json(ramal_id, num_ramal, desc_ramal, ip_ramal, mac_ramal)
+
+            # 4. Atualizar imediatamente a tela e a contagem de KPIs
             self._carregar_dados_interface()
+            self._renderizar_grade_ramais()
+
+            QMessageBox.information(
+                self,
+                "Ramal Excluído",
+                f"✓ Ramal #{num_ramal} excluído com sucesso.\nOs arquivos JSON do sistema foram sincronizados."
+            )
+
+    def _remover_ramal_arquivos_json(self, ramal_id: int, numero: str, descricao: str, ip: str, mac: str = ""):
+        """Remove o ramal de data/store.json e de outros arquivos JSON no disco e na rede."""
+        import json
+        import re
+        from pathlib import Path
+
+        def _item_matches(item: dict) -> bool:
+            if not isinstance(item, dict):
+                return False
+
+            i_id = item.get("id")
+            if i_id is not None and ramal_id is not None and str(i_id) == str(ramal_id):
+                return True
+
+            i_num = str(item.get("numero") or item.get("Numero") or "").strip()
+            i_desc = str(item.get("descricao") or item.get("Descricao") or item.get("Descrição") or "").lower().strip()
+            i_ip = str(item.get("ip") or item.get("IP") or item.get("I.P") or "").strip()
+            i_mac = str(item.get("mac_cisco") or item.get("MAC") or item.get("I.P Cisco") or "").strip().lower()
+
+            if numero and i_num and i_num == numero.strip():
+                return True
+            if descricao and i_desc and i_desc == descricao.lower().strip():
+                return True
+            if numero:
+                n_strip = numero.strip()
+                if i_desc.endswith(f"- {n_strip}") or i_desc.endswith(f" {n_strip}") or i_desc.startswith(f"{n_strip} -"):
+                    return True
+                try:
+                    if re.search(r"\b" + re.escape(n_strip) + r"\b", i_desc):
+                        return True
+                except Exception:
+                    if n_strip in i_desc:
+                        return True
+            if ip and ip.strip() not in ["", "None", "null"] and i_ip and i_ip == ip.strip():
+                return True
+            if mac and mac.strip() not in ["", "None", "-"]:
+                m1 = re.sub(r"[^a-z0-9]", "", mac.lower())
+                m2 = re.sub(r"[^a-z0-9]", "", i_mac.lower())
+                if m1 and m2 and (m1 in m2 or m2 in m1):
+                    return True
+            return False
+
+        arquivos = [
+            Path("data/store.json"),
+            Path("data/modelo_ramais_haoc.json"),
+            Path("data/sample_legacy_data.json"),
+        ]
+
+        # Verificar se há pasta de rede configurada
+        cfg_p = Path("data/network_config.json")
+        if cfg_p.exists():
+            try:
+                with open(cfg_p, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                    c_rede = cfg.get("caminho_rede")
+                    if c_rede:
+                        p_rede = Path(c_rede)
+                        if p_rede.is_file():
+                            arquivos.append(p_rede)
+                        elif p_rede.is_dir():
+                            for jf in p_rede.glob("*.json"):
+                                arquivos.append(jf)
+            except Exception:
+                pass
+
+        for arq in set(arquivos):
+            if not arq.exists() or not arq.is_file():
+                continue
+            try:
+                with open(arq, "r", encoding="utf-8") as f:
+                    dados = json.load(f)
+                alterado = False
+
+                if isinstance(dados, list):
+                    antes = len(dados)
+                    filtrado = [it for it in dados if not _item_matches(it)]
+                    if len(filtrado) != antes:
+                        alterado = True
+                        dados = filtrado
+                elif isinstance(dados, dict):
+                    if "ramais" in dados and isinstance(dados["ramais"], list):
+                        antes = len(dados["ramais"])
+                        dados["ramais"] = [it for it in dados["ramais"] if str(it.get("id")) != str(ramal_id) and not _item_matches(it)]
+                        if len(dados["ramais"]) != antes:
+                            alterado = True
+                    else:
+                        for k, v in dados.items():
+                            if isinstance(v, list):
+                                antes = len(v)
+                                dados[k] = [it for it in v if not _item_matches(it)]
+                                if len(dados[k]) != antes:
+                                    alterado = True
+
+                if alterado:
+                    with open(arq, "w", encoding="utf-8") as f:
+                        json.dump(dados, f, ensure_ascii=False, indent=2)
+            except Exception as ex:
+                logger.warning("Erro ao sincronizar exclusão no JSON %s: %s", arq, ex)
 
     def _abrir_importacao(self):
         dlg = ImportDialog(usuario_atual=self.usuario_atual, parent=self)

@@ -197,37 +197,47 @@ class MonitorEngine:
             online_count = 0
             offline_count = 0
 
-            # 2. Execução paralela com pool de threads
-            max_workers = min(Config.MAX_CONCURRENT_THREADS, max(5, total))
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                self._executor = executor
-                future_to_ramal = {
-                    executor.submit(self._verificar_ramal_individual, r_data): r_data
-                    for r_data in ramais_dados
-                }
+            # 2. Execução dividida em lotes controlados para não sobrecarregar memória da máquina nem o processamento
+            BATCH_SIZE = 12
+            workers_per_batch = min(8, Config.MAX_CONCURRENT_THREADS)
 
-                for future in as_completed(future_to_ramal):
-                    if self._cancel_requested.is_set():
-                        logger.warning("Varredura cancelada pelo operador durante o processamento.")
-                        self.ultimo_status_execucao = "Cancelada pelo usuário"
-                        break
+            for i in range(0, total, BATCH_SIZE):
+                if self._cancel_requested.is_set():
+                    logger.warning("Varredura cancelada pelo operador durante o processamento.")
+                    self.ultimo_status_execucao = "Cancelada pelo usuário"
+                    break
 
-                    try:
-                        resultado = future.result()
-                        processados += 1
-                        if resultado["status"] == StatusRamal.ONLINE.value:
-                            online_count += 1
-                        elif resultado["status"] == StatusRamal.OFFLINE.value:
-                            offline_count += 1
+                lote = ramais_dados[i : i + BATCH_SIZE]
+                with ThreadPoolExecutor(max_workers=min(workers_per_batch, len(lote))) as executor:
+                    self._executor = executor
+                    future_to_ramal = {
+                        executor.submit(self._verificar_ramal_individual, r_data): r_data
+                        for r_data in lote
+                    }
 
-                        self._notificar_listeners({
-                            "tipo": "PROGRESSO",
-                            "processados": processados,
-                            "total": total,
-                            "resultado_individual": resultado,
-                        })
-                    except Exception as exc:
-                        logger.error("Erro ao obter resultado de ramal: %s", exc)
+                    for future in as_completed(future_to_ramal):
+                        if self._cancel_requested.is_set():
+                            break
+
+                        try:
+                            resultado = future.result()
+                            processados += 1
+                            if resultado["status"] == StatusRamal.ONLINE.value:
+                                online_count += 1
+                            elif resultado["status"] == StatusRamal.OFFLINE.value:
+                                offline_count += 1
+
+                            self._notificar_listeners({
+                                "tipo": "PROGRESSO",
+                                "processados": processados,
+                                "total": total,
+                                "resultado_individual": resultado,
+                            })
+                        except Exception as exc:
+                            logger.error("Erro ao obter resultado de ramal: %s", exc)
+
+                # Pausa estratégica entre lotes para liberação de memória e alívio de CPU
+                time.sleep(0.08)
 
             fim_geral = datetime.utcnow()
             self.ultima_varredura = fim_geral

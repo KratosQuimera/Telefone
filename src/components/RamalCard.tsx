@@ -18,7 +18,7 @@ interface RamalCardProps {
   ramal: Ramal;
   usuario: Usuario | null;
   onEdit: (ramal: Ramal) => void;
-  onDelete: (id: number) => void;
+  onDelete: (ramal: Ramal) => void;
   onPing: (id: number) => Promise<void>;
 }
 
@@ -46,16 +46,16 @@ export const RamalCard: React.FC<RamalCardProps> = ({
 
   return (
     <div 
-      className={`rounded-xl border transition-all p-3 relative flex flex-col justify-between min-w-0 ${
+      className={`rounded-xl border transition-all p-3 relative flex flex-col justify-between min-w-0 min-h-[235px] h-full ${
         isOnline 
           ? "bg-[#111827] border-slate-800 hover:border-emerald-500/50 hover:bg-[#131b2c] shadow-xs" 
-          : "offline-card-pulse border-rose-500/80 shadow-md shadow-rose-950/40"
+          : "offline-card-pulse border-rose-500/90 shadow-lg shadow-rose-950/50"
       }`}
     >
       <div className="min-w-0">
         {/* Banner de Alerta Chamativo para Ramal Offline (Mais compacto) */}
         {!isOnline && (
-          <div className="mb-2 px-2 py-0.5 rounded bg-rose-600/90 text-white flex items-center justify-between shadow-xs">
+          <div className="mb-2 px-2 py-0.5 rounded bg-rose-600 text-white flex items-center justify-between shadow-xs">
             <span className="flex items-center gap-1 text-[10px] font-bold tracking-wide uppercase truncate">
               <AlertTriangle className="w-3 h-3 text-amber-300 offline-badge-blink shrink-0" />
               <span className="truncate">Falha Detectada</span>
@@ -122,7 +122,7 @@ export const RamalCard: React.FC<RamalCardProps> = ({
                     <Edit className="w-3 h-3 text-emerald-400" /> Editar
                   </button>
                   <button
-                    onClick={() => { setMenuOpen(false); onDelete(ramal.id); }}
+                    onClick={() => { setMenuOpen(false); onDelete(ramal); }}
                     className="w-full text-left px-3 py-1.5 text-rose-400 hover:bg-rose-950/40 flex items-center gap-2"
                   >
                     <Trash2 className="w-3 h-3 text-rose-400" /> Excluir
@@ -133,13 +133,21 @@ export const RamalCard: React.FC<RamalCardProps> = ({
           </div>
         </div>
 
-        {/* Descrição */}
-        <h4 
-          className="font-semibold text-slate-200 text-xs mb-2 truncate min-w-0" 
-          title={ramal.descricao}
-        >
-          {ramal.descricao || "Sem descrição"}
-        </h4>
+        {/* Descrição em Exibição Completa (Sem cortes, fonte proporcional para acomodar até 3 linhas sem truncar) */}
+        <div className="min-h-[46px] flex items-center mb-1.5">
+          <h4 
+            className={`font-semibold text-slate-200 break-words leading-tight w-full ${
+              (ramal.descricao || "").length > 45
+                ? "text-[10px] leading-[1.2]"
+                : (ramal.descricao || "").length > 25
+                ? "text-[11px] leading-[1.25]"
+                : "text-xs leading-snug"
+            }`}
+            title={ramal.descricao}
+          >
+            {ramal.descricao || "Sem descrição"}
+          </h4>
+        </div>
 
         {/* Grade 2x2 compacta de informações detalhadas (Economiza espaço mantendo 100% das infos) */}
         <div className="grid grid-cols-2 gap-1.5 p-2 rounded-lg bg-[#0b0f19] border border-slate-800/90 text-[11px]">

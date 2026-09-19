@@ -19,6 +19,7 @@ import { IncidentesModal } from "./components/IncidentesModal";
 import { NetworkModal } from "./components/NetworkModal";
 import { LoginModal } from "./components/LoginModal";
 import { AuditoriaModal } from "./components/AuditoriaModal";
+import { ModalExcluir } from "./components/ModalExcluir";
 import { Network } from "lucide-react";
 
 export default function App() {
@@ -45,6 +46,7 @@ export default function App() {
   // Modais
   const [modalRamalOpen, setModalRamalOpen] = useState(false);
   const [ramalEditar, setRamalEditar] = useState<Ramal | null>(null);
+  const [ramalExcluir, setRamalExcluir] = useState<Ramal | null>(null);
   const [modalImportOpen, setModalImportOpen] = useState(false);
   const [modalIncidentesOpen, setModalIncidentesOpen] = useState(false);
   const [modalNetworkOpen, setModalNetworkOpen] = useState(false);
@@ -55,9 +57,16 @@ export default function App() {
   const [motivoAcesso, setMotivoAcesso] = useState<string | null>(null);
   const [acaoPendente, setAcaoPendente] = useState<(() => void) | null>(null);
 
-  // Estados de Operação
+  // Estados de Operação e Varredura Otimizada
   const [loading, setLoading] = useState(true);
   const [isScanning, setIsScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState<{
+    loteAtual: number;
+    totalLotes: number;
+    percentual: number;
+    ramaisProcessados: number;
+    totalRamais: number;
+  } | null>(null);
 
   // Interceptor de Áreas Sensíveis (Solicita senha SOMENTE quando necessário)
   const executarAcaoSensivel = (motivo: string, acao: () => void) => {
@@ -108,16 +117,75 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Ping em todos (Ação Livre de monitoramento)
+  // Ping em lotes (Dividido para não sobrecarregar memória da máquina e não atrapalhar o processamento)
   const handlePingAll = async () => {
+    const ativos = ramais.filter((r) => r.ativo);
+    if (ativos.length === 0) return;
+
     setIsScanning(true);
+    // Divisão em lotes gerenciáveis (15 por vez) para manter baixa pegada de memória e CPU
+    const BATCH_SIZE = 15;
+    const lotes: Ramal[][] = [];
+    for (let i = 0; i < ativos.length; i += BATCH_SIZE) {
+      lotes.push(ativos.slice(i, i + BATCH_SIZE));
+    }
+
     try {
-      const res = await fetch("/api/ping-all", { method: "POST" });
-      if (res.ok) {
-        await carregarDados();
+      for (let i = 0; i < lotes.length; i++) {
+        const lote = lotes[i];
+        const ids = lote.map((r) => r.id);
+
+        setScanProgress({
+          loteAtual: i + 1,
+          totalLotes: lotes.length,
+          percentual: Math.round(((i + 1) / lotes.length) * 100),
+          ramaisProcessados: Math.min((i + 1) * BATCH_SIZE, ativos.length),
+          totalRamais: ativos.length,
+        });
+
+        const res = await fetch("/api/ramais/ping-lote", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.resultados && Array.isArray(data.resultados)) {
+            const mapRes = new Map<number, { status: "ONLINE" | "OFFLINE"; latencia_ms: number | null }>();
+            data.resultados.forEach((item: any) => {
+              mapRes.set(item.id, { status: item.status, latencia_ms: item.latencia_ms });
+            });
+
+            // Atualização progressiva sem bloquear a renderização nem travar a máquina
+            setRamais((prev) =>
+              prev.map((r) => {
+                const up = mapRes.get(r.id);
+                if (up) {
+                  return {
+                    ...r,
+                    status: up.status,
+                    latencia_ms: up.latencia_ms,
+                    ultimo_ping: new Date().toISOString(),
+                  };
+                }
+                return r;
+              })
+            );
+          }
+        }
+
+        // Pausa breve de 100ms para liberação de memória no ciclo de eventos
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
+
+      // Ao finalizar todos os lotes, recarrega estatísticas e incidentes globais
+      await carregarDados();
+    } catch (err) {
+      console.error("Erro durante a varredura em lotes:", err);
     } finally {
       setIsScanning(false);
+      setScanProgress(null);
     }
   };
 
@@ -133,30 +201,77 @@ export default function App() {
     }
   };
 
-  // Salvar Ramal (Área Sensível)
+  // Salvar Ramal (Área Sensível) com teste de ping imediato e atualização ordenada
   const handleSalvarRamal = async (dados: Partial<Ramal>) => {
-    const res = await fetch("/api/ramais", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ramal: dados,
-        usuario_nome: usuario?.nome || "Wagner",
-      }),
-    });
-    if (!res.ok) {
-      const errData = await res.json();
-      throw new Error(errData.erro || "Falha ao salvar ramal.");
+    try {
+      const res = await fetch("/api/ramais", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ramal: dados,
+          usuario_nome: usuario?.nome || "Wagner",
+        }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.erro || "Falha ao salvar ramal.");
+      }
+      const data = await res.json();
+      
+      // Se a API retornou a lista de ramais já atualizada e com ping testado, sincronizar o estado
+      if (Array.isArray(data.ramais)) {
+        setRamais(data.ramais);
+      }
+      if (data.stats) {
+        setStats(data.stats);
+      }
+      
+      // Sincronizar todos os dados do sistema
+      await carregarDados();
+    } catch (err: any) {
+      console.error("Erro ao salvar ramal:", err);
+      throw err;
     }
-    await carregarDados();
   };
 
-  // Excluir Ramal (Área Sensível)
-  const handleExcluirRamal = async (id: number) => {
-    if (!confirm("Deseja realmente desativar este ramal do monitoramento?")) return;
-    const res = await fetch(`/api/ramais/${id}?usuario_nome=${encodeURIComponent(usuario?.nome || "Wagner")}`, {
-      method: "DELETE",
-    });
-    if (res.ok) {
+  // Excluir Ramal e atualizar arquivos JSON
+  const handleConfirmarExclusao = async (id: number) => {
+    const alvo = ramais.find((r) => String(r.id) === String(id) || String(r.numero) === String(id));
+    const targetId = alvo?.id ?? id;
+    const numAlvo = alvo?.numero;
+
+    // 1. Atualização visual instantânea na lista
+    setRamais((prev) => prev.filter((r) => String(r.id) !== String(targetId) && (!numAlvo || String(r.numero) !== String(numAlvo))));
+    setRamalExcluir(null);
+
+    // 2. Enviar requisição DELETE ao servidor
+    try {
+      const res = await fetch(`/api/ramais/${targetId}?usuario_nome=${encodeURIComponent(usuario?.nome || "Wagner")}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: targetId,
+          numero: alvo?.numero,
+          descricao: alvo?.descricao,
+          ip: alvo?.ip,
+          mac_cisco: alvo?.mac_cisco,
+          usuario_nome: usuario?.nome || "Wagner",
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.ramais && Array.isArray(data.ramais)) {
+          setRamais(data.ramais);
+        }
+        if (data.stats) {
+          setStats(data.stats);
+        }
+      }
+    } catch (err: any) {
+      console.error("Erro ao excluir ramal:", err);
+    } finally {
+      // 3. Atualizar a lista automaticamente após exclusão
       await carregarDados();
     }
   };
@@ -210,32 +325,42 @@ export default function App() {
   const ramaisFiltrados = useMemo(() => {
     return ramais
       .filter((r) => {
+        if (!r) return false;
         if (blocoSelecionado !== "TODOS" && r.bloco !== blocoSelecionado) return false;
         if (statusFiltro !== "TODOS" && r.status !== statusFiltro) return false;
         if (busca.trim()) {
           const q = busca.toLowerCase();
+          const num = String(r.numero || "").toLowerCase();
+          const desc = String(r.descricao || "").toLowerCase();
+          const ip = String(r.ip || "").toLowerCase();
+          const mac = String(r.mac_cisco || "").toLowerCase();
+          const setor = String(r.setor || "").toLowerCase();
           const match =
-            r.numero.toLowerCase().includes(q) ||
-            r.descricao.toLowerCase().includes(q) ||
-            r.ip.includes(q) ||
-            r.mac_cisco.toLowerCase().includes(q) ||
-            r.setor.toLowerCase().includes(q);
+            num.includes(q) ||
+            desc.includes(q) ||
+            ip.includes(q) ||
+            mac.includes(q) ||
+            setor.includes(q);
           if (!match) return false;
         }
         return true;
       })
       .sort((a, b) => {
-        const aOff = a.status === "OFFLINE";
-        const bOff = b.status === "OFFLINE";
+        const aOff = a?.status === "OFFLINE";
+        const bOff = b?.status === "OFFLINE";
 
         // Se um estiver OFF e outro ON, o OFF tem prioridade máxima no topo
         if (aOff && !bOff) return -1;
         if (!aOff && bOff) return 1;
 
         // Se ambos estiverem com mesmo status (ou quando voltar a ser ONLINE), ordem alfabética estrita
-        const cmpDesc = a.descricao.localeCompare(b.descricao, "pt-BR", { sensitivity: "base", numeric: true });
+        const descA = String(a?.descricao || "");
+        const descB = String(b?.descricao || "");
+        const cmpDesc = descA.localeCompare(descB, "pt-BR", { sensitivity: "base", numeric: true });
         if (cmpDesc !== 0) return cmpDesc;
-        return a.numero.localeCompare(b.numero, "pt-BR", { numeric: true });
+        const numA = String(a?.numero || "");
+        const numB = String(b?.numero || "");
+        return numA.localeCompare(numB, "pt-BR", { numeric: true });
       });
   }, [ramais, blocoSelecionado, statusFiltro, busca]);
 
@@ -418,6 +543,37 @@ export default function App() {
           </div>
         ) : (
           <div className="space-y-3">
+            {/* Banner de Progresso da Varredura em Lotes (Baixo consumo de CPU e Memória) */}
+            {scanProgress && (
+              <div className="bg-emerald-950/80 border border-emerald-600/80 rounded-xl p-3 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg shadow-emerald-950/40 text-xs">
+                <div className="flex items-center gap-2.5 text-emerald-300">
+                  <RefreshCw className="w-4 h-4 animate-spin text-emerald-400 shrink-0" />
+                  <div>
+                    <p className="font-bold text-white flex items-center gap-1.5">
+                      <span>Varredura Dividida em Lotes</span>
+                      <span className="text-[10px] bg-emerald-900 border border-emerald-700 px-1.5 py-0.2 rounded text-emerald-200">
+                        Lote {scanProgress.loteAtual}/{scanProgress.totalLotes}
+                      </span>
+                    </p>
+                    <p className="text-[11px] text-emerald-200/80">
+                      Processando de modo escalonado ({scanProgress.ramaisProcessados}/{scanProgress.totalRamais} ramais) para poupar memória e processamento.
+                    </p>
+                  </div>
+                </div>
+                <div className="w-full sm:w-48 flex items-center gap-2">
+                  <div className="flex-1 bg-slate-900 rounded-full h-2.5 overflow-hidden border border-emerald-800">
+                    <div 
+                      className="bg-emerald-400 h-full transition-all duration-300"
+                      style={{ width: `${scanProgress.percentual}%` }}
+                    />
+                  </div>
+                  <span className="font-bold font-mono text-white text-[11px] shrink-0">
+                    {scanProgress.percentual}%
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Aviso de Destaque no Topo para Ramais Offline */}
             {totalOfflineFiltrados > 0 && (
               <div className="bg-rose-950/40 border border-rose-800/80 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-xs">
@@ -446,10 +602,8 @@ export default function App() {
                       setModalRamalOpen(true);
                     });
                   }}
-                  onDelete={(id) => {
-                    executarAcaoSensivel("Excluir Ramal", () => {
-                      handleExcluirRamal(id);
-                    });
+                  onDelete={(r) => {
+                    setRamalExcluir(r);
                   }}
                   onPing={handlePingRamal}
                 />
@@ -528,6 +682,13 @@ export default function App() {
         isOpen={modalAuditoriaOpen}
         onClose={() => setModalAuditoriaOpen(false)}
         logs={auditoriaLogs}
+      />
+
+      <ModalExcluir
+        isOpen={!!ramalExcluir}
+        ramal={ramalExcluir}
+        onClose={() => setRamalExcluir(null)}
+        onConfirm={handleConfirmarExclusao}
       />
     </div>
   );

@@ -1,62 +1,57 @@
-#!/usr/bin/env python3
 """
-Script automatizado de compilação do executável Desktop (HAOC_VoIP_Monitor.exe).
-Compatível com Windows 10/11 e sistemas desktop.
+Script de automação para compilação do executável Windows (.exe)
+Hospital Alemão Osvaldo Cruz - HAOC VoIP Monitor
 """
 import os
 import sys
 import subprocess
-import shutil
+from pathlib import Path
 
-def main():
+def compilar():
     print("=" * 70)
-    print("  HAOC VoIP Monitor Enterprise - Gerador de Executável (.exe)")
+    print("  HAOC VoIP Monitor - Compilação do Executável Windows (.EXE)")
     print("=" * 70)
 
-    # 1. Verificar/Instalar PyInstaller
-    try:
-        import PyInstaller
-        print(f"[OK] PyInstaller detectado: versão {PyInstaller.__version__}")
-    except ImportError:
-        print("[!] PyInstaller não encontrado. Instalando automaticamente via pip...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller>=6.4.0"])
-        print("[OK] PyInstaller instalado com sucesso.")
+    raiz = Path(__file__).resolve().parent
+    os.chdir(raiz)
 
-    # 2. Assegurar diretório do banco e inicialização
-    if not os.path.exists("data"):
-        os.makedirs("data", exist_ok=True)
-    
-    # 3. Executar o PyInstaller utilizando o arquivo de especificação .spec
-    spec_file = "haoc_voip_desktop.spec"
-    if not os.path.exists(spec_file):
-        print(f"[ERRO] Arquivo de especificação '{spec_file}' não encontrado!")
-        sys.exit(1)
+    # 1. Garantir pasta data e arquivos mínimos
+    data_dir = raiz / "data"
+    data_dir.mkdir(exist_ok=True)
 
-    print(f"\n[*] Iniciando empacotamento com PyInstaller ({spec_file})...")
+    # 2. Comando PyInstaller com todas as dependências ocultas do PyQt6 e SQLite
     cmd = [
         sys.executable,
         "-m",
         "PyInstaller",
-        "--clean",
         "--noconfirm",
-        spec_file,
+        "--clean",
+        "--onefile",
+        "--windowed",
+        "--name", "HAOC_VoIP_Monitor",
+        "--add-data", f"{data_dir}{os.pathsep}data",
+        "--hidden-import", "PyQt6",
+        "--hidden-import", "PyQt6.QtCore",
+        "--hidden-import", "PyQt6.QtGui",
+        "--hidden-import", "PyQt6.QtWidgets",
+        "--hidden-import", "sqlalchemy.dialects.sqlite",
+        "--hidden-import", "sqlite3",
+        "--hidden-import", "requests",
+        "desktop_main.py",
     ]
 
-    result = subprocess.run(cmd)
+    print(f"\n[*] Executando comando PyInstaller:\n{' '.join(cmd)}\n")
+    resultado = subprocess.run(cmd)
 
-    if result.returncode == 0:
+    if resultado.returncode == 0:
+        exe_path = raiz / "dist" / "HAOC_VoIP_Monitor.exe"
         print("\n" + "=" * 70)
-        print("  SUCESSO: Executável gerado com sucesso!")
+        print("[SUCESSO] Executável criado com êxito!")
+        print(f"Localização do executável: {exe_path}")
         print("=" * 70)
-        dist_dir = os.path.abspath("dist")
-        exe_name = "HAOC_VoIP_Monitor.exe" if sys.platform == "win32" else "HAOC_VoIP_Monitor"
-        exe_path = os.path.join(dist_dir, exe_name)
-        print(f"\nO executável foi criado em:")
-        print(f"  -> {exe_path}")
-        print("\nPara distribuir no hospital, copie o arquivo executável da pasta 'dist'.")
     else:
         print("\n[ERRO] Falha ao compilar o executável com PyInstaller.")
-        sys.exit(result.returncode)
+        sys.exit(resultado.returncode)
 
 if __name__ == "__main__":
-    main()
+    compilar()

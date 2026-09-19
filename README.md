@@ -116,23 +116,6 @@ python desktop_main.py
 2. Navegue pelos blocos e ramais no grid de cartões.
 3. Utilize os botões **Verificar Todos Agora**, **Novo Ramal**, **Importar JSON** e **Incidentes**.
 
-### 5.3 Como Gerar o Executável Windows (.exe)
-Para distribuir a aplicação como um executável nativo Windows sem necessidade do usuário ter Python instalado:
-
-* **Opção 1 (Automático via Windows Batch - 1 Clique)**:
-  Dê um duplo clique no arquivo `build_windows.bat`. Ele verificará o Python, instalará o PyInstaller e gerará o arquivo `dist\HAOC_VoIP_Monitor.exe`.
-
-* **Opção 2 (Via Linha de Comando / PowerShell)**:
-  ```bash
-  python build_exe.py
-  ```
-  Ou diretamente com a especificação PyInstaller:
-  ```bash
-  pyinstaller --clean haoc_voip_desktop.spec
-  ```
-
-O executável final independente estará pronto na pasta `dist/HAOC_VoIP_Monitor.exe`.
-
 ---
 
 ## 6. Funcionalidades Principais

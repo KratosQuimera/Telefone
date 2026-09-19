@@ -33,16 +33,6 @@
   ],
   "PRONTO SOCORRO": [
     {
-      "Modelo": "Cisco CP-8845",
-      "I.P Cisco": "192.168.20.10",
-      "Descrição": "2001 - Triagem e Classificação de Risco",
-      "I.P": "192.168.20.10",
-      "MAC Cisco": "00:1B:54:23:45:01",
-      "Setor": "Triagem e Classificação",
-      "Localização": "Entrada PS Ambulâncias",
-      "Criticidade": "CRITICA"
-    },
-    {
       "Modelo": "Cisco CP-8861",
       "I.P Cisco": "192.168.20.11",
       "Descrição": "2002 - Sala Vermelha Ressuscitação",
