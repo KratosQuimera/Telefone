@@ -25,6 +25,26 @@ class Config:
     BASE_DIR: Path = BASE_DIR
     DATA_DIR: Path = DATA_DIR
     BACKUP_DIR: Path = BACKUP_DIR
+
+    STORE_JSON_PATH: Path = DATA_DIR / "store.json"
+    MODELO_JSON_PATH: Path = DATA_DIR / "modelo_ramais_haoc.json"
+    NETWORK_CONFIG_PATH: Path = DATA_DIR / "network_config.json"
+
+    @classmethod
+    def obter_caminho_dados(cls, nome_arquivo: str) -> Path:
+        """Resolve o caminho absoluto para um arquivo de dados garantindo existência."""
+        candidatos = [
+            cls.DATA_DIR / nome_arquivo,
+            Path("data") / nome_arquivo,
+            cls.BASE_DIR / nome_arquivo,
+            Path(nome_arquivo),
+        ]
+        for c in candidatos:
+            if c.exists():
+                return c.resolve()
+        # Fallback: criar no diretório padrão DATA_DIR
+        cls.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        return (cls.DATA_DIR / nome_arquivo).resolve()
     
     SECRET_KEY: str = os.getenv("HAOC_SECRET_KEY", "haoc-enterprise-secret-key-hospitalar-2026")
     
@@ -35,7 +55,7 @@ class Config:
     # Configurações de Rede e Monitoramento
     DEFAULT_PING_TIMEOUT: float = float(os.getenv("HAOC_PING_TIMEOUT_SECONDS", "1.5"))
     DEFAULT_PING_RETRIES: int = int(os.getenv("HAOC_PING_RETRIES", "2"))
-    DEFAULT_SCAN_INTERVAL: int = int(os.getenv("HAOC_MONITOR_INTERVAL_SECONDS", "60"))
+    DEFAULT_SCAN_INTERVAL: int = int(os.getenv("HAOC_MONITOR_INTERVAL_SECONDS", "180"))  # 3 minutos (180 segundos)
     MAX_CONCURRENT_THREADS: int = int(os.getenv("HAOC_MAX_THREADS", "25"))
     
     # Alertas

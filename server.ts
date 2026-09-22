@@ -81,6 +81,35 @@ async function startServer() {
     });
   });
 
+  // Atualizar Ramal via PUT /api/ramais/:id
+  app.put("/api/ramais/:id", (req, res) => {
+    let ramal = req.body?.ramal || req.body || {};
+    const idParam = req.params.id;
+    const numId = parseInt(idParam, 10);
+    ramal.id = isNaN(numId) ? idParam : numId;
+    const usuario_nome = req.body?.usuario_nome || "Wagner";
+
+    if (!ramal.numero && ramal.descricao) {
+      const match = String(ramal.descricao).match(/\b(\d{3,5})\b/);
+      if (match) {
+        ramal.numero = match[1];
+      } else {
+        ramal.numero = String(ramal.id);
+      }
+    }
+    const salvo = store.salvarRamal(ramal, usuario_nome);
+    const ramaisAtualizados = store.getRamais();
+    const statsAtualizados = store.getStats();
+
+    res.json({
+      ...salvo,
+      ramal: salvo,
+      ramais: ramaisAtualizados,
+      stats: statsAtualizados,
+      mensagem: `Ramal ${salvo.numero} atualizado com sucesso no JSON.`,
+    });
+  });
+
   // Excluir Ramal e atualizar arquivos JSON
   app.delete("/api/ramais/:id", (req, res) => {
     const rawId = req.params.id;
@@ -128,8 +157,21 @@ async function startServer() {
 
   // Ping Geral / Varredura Completa
   app.post("/api/ping-all", (_req, res) => {
-    const resultado = store.pingAll();
-    res.json(resultado);
+    try {
+      const resultado = store.pingAll();
+      const ramaisAtualizados = store.getRamais();
+      const statsAtualizados = store.getStats();
+      res.json({
+        ...resultado,
+        sucesso: true,
+        ramais: ramaisAtualizados,
+        stats: statsAtualizados,
+        mensagem: `Varredura geral concluída: ${resultado.total} ramais verificados (${resultado.online} online, ${resultado.offline} offline).`,
+      });
+    } catch (err: any) {
+      console.error("[Server] Erro na rota /api/ping-all:", err);
+      res.status(500).json({ erro: err?.message || "Falha na verificação geral." });
+    }
   });
 
   // Incidentes

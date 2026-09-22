@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger("haoc.ramal_dialog")
@@ -24,6 +25,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
+from haoc_voip.config import Config
 from haoc_voip.core.models import Ramal, Bloco, Setor, PerfilUsuario
 from haoc_voip.core.database import db
 from haoc_voip.core.importer import validar_ipv4, normalizar_mac, MAC_CISCO_REGEX
@@ -156,17 +158,19 @@ class RamalDialog(QDialog):
             logger.warning("Falha ao carregar blocos/setores do SQLite: %s", e)
 
         # Se for edição, carregar dados existentes
+        self.desc_original = ""
         if self.ramal_id:
             carregou = False
-            # 1. Tentar ler de data/store.json
-            store_p = Path("data/store.json")
+            # 1. Tentar ler de store.json
+            store_p = Config.obter_caminho_dados("store.json")
             if store_p.exists():
                 try:
                     with open(store_p, "r", encoding="utf-8") as f:
                         d = json.load(f)
                         for r in d.get("ramais", []):
-                            if r.get("id") == self.ramal_id:
+                            if str(r.get("id")) == str(self.ramal_id):
                                 self.txt_desc.setText(str(r.get("descricao") or ""))
+                                self.desc_original = str(r.get("descricao") or "")
                                 idx_b = self.cb_bloco.findText(r.get("bloco") or "Bloco Central")
                                 if idx_b >= 0:
                                     self.cb_bloco.setCurrentIndex(idx_b)
@@ -251,7 +255,30 @@ class RamalDialog(QDialog):
             except Exception as e:
                 logger.warning("Não foi possível gerar backup pré-salvamento: %s", e)
 
-            # 2. Persistência em SQLite (com proteção contra travamentos)
+            # 2. Testar ping imediatamente para definir o status operacional real em tempo real
+            msg_ping = "Ping não configurado (sem IP válido)."
+            status_real = "OFFLINE"
+            latencia_real = None
+            erro_ping = None
+
+            if ip and validar_ipv4(ip):
+                try:
+                    sucesso, latencia, erro_ping = executar_ping(ip, timeout_seconds=1.5, retries=1)
+                    if sucesso:
+                        status_real = "ONLINE"
+                        latencia_real = latencia
+                        lat_str = f"{latencia:.1f}ms" if latencia else "resposta OK"
+                        msg_ping = f"Ping OK ({lat_str}) - Ramal ONLINE."
+                    else:
+                        status_real = "OFFLINE"
+                        latencia_real = None
+                        msg_ping = f"Sem resposta ao ping ({erro_ping or 'timeout'}) - Ramal OFFLINE."
+                except Exception as p_err:
+                    msg_ping = f"Teste de ping executado com alerta: {p_err}"
+
+            agora_salvamento = datetime.utcnow()
+
+            # 3. Persistência em SQLite (com proteção contra travamentos e atualização de status)
             try:
                 with db.session_scope() as session:
                     if self.ramal_id:
@@ -266,6 +293,15 @@ class RamalDialog(QDialog):
                             ramal.modelo = modelo
                             ramal.criticidade = crit
                             ramal.localizacao = loc
+                            ramal.status_atual = status_real
+                            ramal.ultima_latencia = latencia_real
+                            ramal.ultima_verificacao = agora_salvamento
+                            if status_real == "ONLINE":
+                                ramal.ultimo_visto_online = agora_salvamento
+                                ramal.ultimo_erro = None
+                            else:
+                                ramal.ultimo_visto_offline = agora_salvamento
+                                ramal.ultimo_erro = erro_ping
                         else:
                             novo_r = Ramal(
                                 id=self.ramal_id,
@@ -278,6 +314,11 @@ class RamalDialog(QDialog):
                                 criticidade=crit,
                                 localizacao=loc,
                                 observacoes=obs,
+                                status_atual=status_real,
+                                ultima_latencia=latencia_real,
+                                ultima_verificacao=agora_salvamento,
+                                ultimo_visto_online=agora_salvamento if status_real == "ONLINE" else None,
+                                ultimo_visto_offline=agora_salvamento if status_real == "OFFLINE" else None,
                                 ativo=True,
                             )
                             session.add(novo_r)
@@ -293,6 +334,11 @@ class RamalDialog(QDialog):
                             criticidade=crit,
                             localizacao=loc,
                             observacoes=obs,
+                            status_atual=status_real,
+                            ultima_latencia=latencia_real,
+                            ultima_verificacao=agora_salvamento,
+                            ultimo_visto_online=agora_salvamento if status_real == "ONLINE" else None,
+                            ultimo_visto_offline=agora_salvamento if status_real == "OFFLINE" else None,
                             ativo=True,
                         )
                         session.add(ramal)
@@ -302,7 +348,7 @@ class RamalDialog(QDialog):
             except Exception as e:
                 logger.warning("Falha ao salvar ramal no SQLite (mantendo sincronização JSON): %s", e)
 
-            # 3. Sincronizar obrigatoriamente no store.json e arquivos de rede JSON
+            # 4. Sincronizar obrigatoriamente no store.json e arquivos de rede JSON com o status real
             self._sincronizar_edicao_json(
                 ramal_id=self.ramal_id,
                 descricao=desc,
@@ -312,38 +358,28 @@ class RamalDialog(QDialog):
                 mac=mac,
                 modelo=modelo,
                 usuario_nome=user_nome,
+                status=status_real,
+                latencia=latencia_real,
+                desc_antiga=getattr(self, "desc_original", ""),
             )
 
-            # 4. Auditoria não-bloqueante
+            # 5. Auditoria não-bloqueante
             try:
                 registrar_auditoria(
                     acao="EDITAR_RAMAL_DESKTOP" if self.ramal_id else "CRIAR_RAMAL_DESKTOP",
                     entidade="ramal",
                     entidade_id=self.ramal_id,
-                    detalhes={"descricao": desc, "ip": ip, "mac": mac, "bloco": bloco},
+                    detalhes={"descricao": desc, "ip": ip, "mac": mac, "bloco": bloco, "status": status_real},
                     usuario_id=user_id,
                     ip_origem="desktop_client",
                 )
             except Exception as e:
                 logger.warning("Auditoria não registrada: %s", e)
 
-            # 5. Testar ping imediatamente após salvar para obter status em tempo real
-            msg_ping = "Ping não configurado (sem IP válido)."
-            if ip and validar_ipv4(ip):
-                try:
-                    sucesso, latencia, erro_ping = executar_ping(ip, timeout_seconds=1.5, retries=1)
-                    if sucesso:
-                        lat_str = f"{latencia:.1f}ms" if latencia else "resposta OK"
-                        msg_ping = f"Ping OK ({lat_str}) - Ramal ONLINE."
-                    else:
-                        msg_ping = f"Sem resposta ao ping ({erro_ping or 'timeout'}) - Ramal OFFLINE."
-                except Exception as p_err:
-                    msg_ping = f"Teste de ping executado com alerta: {p_err}"
-
             QMessageBox.information(
                 self, 
                 "Sucesso", 
-                f"Ramal salvo e sincronizado com sucesso!\n\nStatus do teste de ping:\n{msg_ping}\n\nA lista será atualizada e reordenada conforme o status em ordem alfabética."
+                f"Ramal salvo e sincronizado com sucesso!\n\nStatus do teste de ping:\n{msg_ping}\n\nA lista foi atualizada imediatamente e o ramal está {status_real}."
             )
             self.accept()
 
@@ -361,8 +397,11 @@ class RamalDialog(QDialog):
         mac: str,
         modelo: str,
         usuario_nome: str,
+        status: str = "ONLINE",
+        latencia: float | None = None,
+        desc_antiga: str = "",
     ):
-        """Garante que a edição modifique imediatamente o store.json e arquivos da rede."""
+        """Garante que a edição modifique imediatamente o store.json e arquivos da rede com o status real."""
         import os
         import re
 
@@ -370,58 +409,78 @@ class RamalDialog(QDialog):
         m = re.search(r"\b(\d{3,5})\b", descricao)
         if m:
             numero_extraido = m.group(1)
+        elif desc_antiga:
+            m_ant = re.search(r"\b(\d{3,5})\b", desc_antiga)
+            if m_ant:
+                numero_extraido = m_ant.group(1)
 
-        store_p = Path("data/store.json")
-        if store_p.exists():
-            try:
+        store_p = Config.obter_caminho_dados("store.json")
+        try:
+            d = {"usuarios": [], "ramais": [], "incidentes": [], "auditoria": []}
+            if store_p.exists():
                 with open(store_p, "r", encoding="utf-8") as f:
                     d = json.load(f)
-                ramais = d.get("ramais", [])
-                achou = False
-                for r in ramais:
-                    if (ramal_id and r.get("id") == ramal_id) or (numero_extraido and str(r.get("numero") or "") == numero_extraido):
-                        r["descricao"] = descricao
-                        r["bloco"] = bloco
-                        r["setor"] = setor
-                        r["ip"] = ip
-                        r["mac_cisco"] = mac
-                        r["modelo"] = modelo
-                        if numero_extraido:
-                            r["numero"] = numero_extraido
-                        achou = True
-                        break
+            ramais = d.get("ramais", [])
+            achou = False
+            for r in ramais:
+                match_id = bool(ramal_id and str(r.get("id")) == str(ramal_id))
+                match_num = bool(numero_extraido and str(r.get("numero") or "").strip() == numero_extraido)
+                match_desc = bool(desc_antiga and str(r.get("descricao") or "").strip() == desc_antiga.strip())
+                if match_id or match_num or match_desc:
+                    r["descricao"] = descricao
+                    r["bloco"] = bloco
+                    r["setor"] = setor
+                    r["ip"] = ip
+                    r["mac_cisco"] = mac
+                    r["modelo"] = modelo
+                    r["status"] = status
+                    r["latencia_ms"] = round(latencia, 1) if latencia else None
+                    r["latencia"] = round(latencia, 1) if latencia else None
+                    r["ultimo_ping"] = datetime.now().isoformat()
+                    if numero_extraido:
+                        r["numero"] = numero_extraido
+                    achou = True
+                    break
 
-                if not achou:
-                    max_id = max([r.get("id", 100) for r in ramais], default=100)
-                    novo_id = ramal_id or (max_id + 1)
-                    novo_obj = {
-                        "id": novo_id,
-                        "numero": numero_extraido or str(novo_id),
-                        "descricao": descricao,
-                        "bloco": bloco,
-                        "setor": setor,
-                        "ip": ip or "192.168.10.100",
-                        "mac_cisco": mac or "00:27:0D:00:00:00",
-                        "modelo": modelo or "Cisco CP-7841",
-                        "status": "ONLINE" if ip else "OFFLINE",
-                        "latencia_ms": 15,
-                        "ultimo_ping": None,
-                        "ativo": True,
-                    }
-                    ramais.append(novo_obj)
-                    d["ramais"] = ramais
+            if not achou:
+                max_id = max([int(r.get("id", 100)) for r in ramais if str(r.get("id", "")).isdigit()], default=100)
+                novo_id = ramal_id or (max_id + 1)
+                novo_obj = {
+                    "id": novo_id,
+                    "numero": numero_extraido or str(novo_id),
+                    "descricao": descricao,
+                    "bloco": bloco,
+                    "setor": setor,
+                    "ip": ip or "",
+                    "mac_cisco": mac or "00:27:0D:00:00:00",
+                    "modelo": modelo or "Cisco CP-7841",
+                    "status": status,
+                    "latencia_ms": round(latencia, 1) if latencia else 15,
+                    "latencia": round(latencia, 1) if latencia else 15,
+                    "ultimo_ping": datetime.now().isoformat(),
+                    "ativo": True,
+                }
+                ramais.append(novo_obj)
+                d["ramais"] = ramais
 
-                with open(store_p, "w", encoding="utf-8") as f:
-                    json.dump(d, f, indent=2, ensure_ascii=False)
-            except Exception as e:
-                logger.warning("Falha ao sincronizar edição no store.json: %s", e)
+            store_p.parent.mkdir(parents=True, exist_ok=True)
+            with open(store_p, "w", encoding="utf-8") as f:
+                json.dump(d, f, indent=2, ensure_ascii=False)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except Exception:
+                    pass
+            logger.info("store.json salvo e sincronizado com sucesso: %s", store_p)
+        except Exception as e:
+            logger.warning("Falha ao sincronizar edição no store.json: %s", e)
 
         # Atualizar também no modelo_ramais_haoc.json e qualquer arquivo na pasta de rede
         candidatos = [
-            Path("data/modelo_ramais_haoc.json"),
-            Path("data/sample_legacy_data.json"),
+            Config.obter_caminho_dados("modelo_ramais_haoc.json"),
+            Config.obter_caminho_dados("sample_legacy_data.json"),
         ]
-        cfg_path = Path("data/network_config.json")
+        cfg_path = Config.obter_caminho_dados("network_config.json")
         if cfg_path.exists():
             try:
                 with open(cfg_path, "r", encoding="utf-8") as f:
@@ -437,7 +496,7 @@ class RamalDialog(QDialog):
             except Exception:
                 pass
 
-        for c in candidatos:
+        for c in set(candidatos):
             if c.exists() and c.is_file():
                 try:
                     with open(c, "r", encoding="utf-8") as f:
@@ -449,28 +508,36 @@ class RamalDialog(QDialog):
                         if not isinstance(item, dict):
                             return
                         num_item = str(item.get("numero") or item.get("Numero") or "").strip()
-                        id_item = item.get("id")
-                        if (ramal_id and id_item == ramal_id) or (numero_extraido and num_item == numero_extraido):
+                        id_item = str(item.get("id")) if item.get("id") is not None else ""
+                        desc_item = str(item.get("descricao") or item.get("Descricao") or item.get("Descrição") or "").strip()
+
+                        match_id = bool(ramal_id and id_item == str(ramal_id))
+                        match_num = bool(numero_extraido and (num_item == numero_extraido or desc_item.endswith(numero_extraido) or re.search(r'\b' + re.escape(numero_extraido) + r'\b', desc_item)))
+                        match_desc = bool(desc_antiga and desc_item.lower() == desc_antiga.strip().lower())
+
+                        if match_id or match_num or match_desc:
                             modificou = True
                             if "Descricao" in item: item["Descricao"] = descricao
                             elif "Descrição" in item: item["Descrição"] = descricao
                             else: item["descricao"] = descricao
 
                             if "IP" in item: item["IP"] = ip
-                            elif "I.P" in item: item["I.P"] = ip
+                            elif "I.P" in item: item["I.P"] = ip if ip else "None"
                             else: item["ip"] = ip
 
                             if "Bloco" in item: item["Bloco"] = bloco
-                            else: item["bloco"] = bloco
+                            elif "bloco" in item: item["bloco"] = bloco
 
                             if "Setor" in item: item["Setor"] = setor
-                            else: item["setor"] = setor
+                            elif "setor" in item: item["setor"] = setor
 
                             if "MAC" in item: item["MAC"] = mac
-                            else: item["mac_cisco"] = mac
+                            elif "I.P Cisco" in item: item["I.P Cisco"] = mac
+                            elif "MAC Cisco" in item: item["MAC Cisco"] = mac
+                            elif "mac_cisco" in item: item["mac_cisco"] = mac
 
                             if "Modelo" in item: item["Modelo"] = modelo
-                            else: item["modelo"] = modelo
+                            elif "modelo" in item: item["modelo"] = modelo
 
                     if isinstance(data, list):
                         for item in data:
@@ -488,5 +555,11 @@ class RamalDialog(QDialog):
                     if modificou:
                         with open(c, "w", encoding="utf-8") as f:
                             json.dump(data, f, indent=2, ensure_ascii=False)
+                            f.flush()
+                            try:
+                                os.fsync(f.fileno())
+                            except Exception:
+                                pass
+                        logger.info("Arquivo JSON externo atualizado com sucesso: %s", c)
                 except Exception as e:
                     logger.warning("Falha ao atualizar JSON externo %s: %s", c, e)

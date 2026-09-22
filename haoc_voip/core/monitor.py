@@ -42,15 +42,36 @@ def executar_ping(ip: str, timeout_seconds: float = 1.5, retries: int = 2) -> Tu
         timeout_arg = max(1, int(timeout_seconds))
         cmd = ["ping", "-c", "1", "-W", str(timeout_arg), ip]
 
+    # Configurações de execução em subprocesso
+    kwargs = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "stdin": subprocess.DEVNULL,
+        "text": True,
+        "timeout": timeout_seconds + 1.0,
+    }
+
+    if is_win:
+        # Garante modo 100% oculto sem abertura de janela do CMD mesmo que rapidamente
+        creationflags = 0
+        if hasattr(subprocess, "CREATE_NO_WINDOW"):
+            creationflags |= subprocess.CREATE_NO_WINDOW
+        kwargs["creationflags"] = creationflags
+
+        try:
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            kwargs["startupinfo"] = startupinfo
+        except Exception:
+            pass
+
     for tentativa in range(retries):
         try:
             inicio = time.perf_counter()
             proc = subprocess.run(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=timeout_seconds + 1.0,
+                **kwargs,
             )
             fim = time.perf_counter()
             elapsed_ms = (fim - inicio) * 1000
@@ -102,11 +123,17 @@ class MonitorEngine:
 
         # Callbacks para atualizar interfaces gráficas (Desktop/Web)
         self.listeners: List[Callable[[Dict[str, Any]], None]] = []
+        self._db_lock = threading.RLock()
 
     def register_listener(self, callback: Callable[[Dict[str, Any]], None]) -> None:
         """Registra ouvinte para receber eventos de progresso e finalização."""
         if callback not in self.listeners:
             self.listeners.append(callback)
+
+    def unregister_listener(self, callback: Callable[[Dict[str, Any]], None]) -> None:
+        """Remove ouvinte da lista de notificações."""
+        if callback in self.listeners:
+            self.listeners.remove(callback)
 
     def _notificar_listeners(self, evento: Dict[str, Any]) -> None:
         for listener in list(self.listeners):
@@ -176,21 +203,45 @@ class MonitorEngine:
         self._notificar_listeners({"tipo": "VARREDURA_INICIADA", "inicio": inicio_geral.isoformat()})
 
         try:
-            # 1. Carregar ramais ativos do banco
-            with db.session_scope() as session:
-                ramais = session.query(Ramal).filter(Ramal.ativo == True).all()
-                ramais_dados = [
-                    {
-                        "id": r.id,
-                        "ip": r.ip,
-                        "status_anterior": r.status_atual,
-                        "descricao": r.descricao,
-                        "bloco": r.bloco,
-                        "criticidade": r.criticidade,
-                        "ultimo_visto_offline": r.ultimo_visto_offline,
-                    }
-                    for r in ramais
-                ]
+            # 1. Carregar ramais ativos do banco ou sincronizar de store.json
+            with self._db_lock:
+                with db.session_scope() as session:
+                    ramais = session.query(Ramal).filter(Ramal.ativo == True).all()
+                    ramais_dados = [
+                        {
+                            "id": r.id,
+                            "ip": r.ip,
+                            "status_anterior": r.status_atual,
+                            "descricao": r.descricao,
+                            "bloco": r.bloco,
+                            "criticidade": r.criticidade,
+                            "ultimo_visto_offline": r.ultimo_visto_offline,
+                        }
+                        for r in ramais
+                    ]
+
+            # Se não houver ramais no SQLite, carrega de store.json
+            if not ramais_dados:
+                try:
+                    import json
+                    from haoc_voip.config import Config
+                    store_p = Config.obter_caminho_dados("store.json")
+                    if store_p.exists():
+                        with open(store_p, "r", encoding="utf-8") as f_st:
+                            d_st = json.load(f_st)
+                        for item in d_st.get("ramais", []):
+                            if item.get("ativo", True):
+                                ramais_dados.append({
+                                    "id": item.get("id"),
+                                    "ip": item.get("ip"),
+                                    "status_anterior": item.get("status", "OFFLINE"),
+                                    "descricao": item.get("descricao", ""),
+                                    "bloco": item.get("bloco", "Bloco Central"),
+                                    "criticidade": "MEDIA",
+                                    "ultimo_visto_offline": None,
+                                })
+                except Exception as e_st:
+                    logger.warning("Falha ao recuperar ramais do store.json: %s", e_st)
 
             total = len(ramais_dados)
             processados = 0
@@ -244,6 +295,40 @@ class MonitorEngine:
             self.total_varreduras += 1
             if not self._cancel_requested.is_set():
                 self.ultimo_status_execucao = f"Concluída com sucesso ({processados}/{total})"
+
+            # Sincronizar os status consolidados da varredura com data/store.json se existir
+            try:
+                import json
+                import os
+                from haoc_voip.config import Config
+                store_p = Config.obter_caminho_dados("store.json")
+                if store_p.exists():
+                    with open(store_p, "r", encoding="utf-8") as f:
+                        d_store = json.load(f)
+                    ramais_s = d_store.get("ramais", [])
+                    with db.session_scope() as session:
+                        db_ramais = session.query(Ramal.id, Ramal.status_atual, Ramal.ultima_latencia, Ramal.descricao).all()
+                        db_map_id = {r.id: r for r in db_ramais}
+                        db_map_desc = {r.descricao: r for r in db_ramais if r.descricao}
+
+                        for item_s in ramais_s:
+                            db_r = db_map_id.get(item_s.get("id")) or db_map_desc.get(item_s.get("descricao"))
+                            if db_r and db_r.status_atual:
+                                item_s["status"] = db_r.status_atual
+                                if db_r.ultima_latencia is not None:
+                                    item_s["latencia_ms"] = db_r.ultima_latencia
+                                    item_s["latencia"] = db_r.ultima_latencia
+                                item_s["ultimo_ping"] = fim_geral.isoformat()
+
+                    with open(store_p, "w", encoding="utf-8") as f:
+                        json.dump(d_store, f, indent=2, ensure_ascii=False)
+                        f.flush()
+                        try:
+                            os.fsync(f.fileno())
+                        except Exception:
+                            pass
+            except Exception as e_sync:
+                logger.warning("Falha ao sincronizar varredura com store.json: %s", e_sync)
 
             sumario = {
                 "status": "concluido",
@@ -304,82 +389,83 @@ class MonitorEngine:
                 latencia = None
                 erro = err_msg or "Indisponibilidade de rede"
 
-        # 2. Persistência de estado e incidentes no SQLite
+        # 2. Persistência de estado e incidentes no SQLite (com lock para evitar concorrência)
         try:
-            with db.session_scope() as session:
-                ramal = session.query(Ramal).filter(Ramal.id == ramal_id).first()
-                if not ramal:
-                    return {"ramal_id": ramal_id, "status": novo_status}
+            with self._db_lock:
+                with db.session_scope() as session:
+                    ramal = session.query(Ramal).filter(Ramal.id == ramal_id).first()
+                    if not ramal:
+                        return {"ramal_id": ramal_id, "status": novo_status}
 
-                # Registrar histórico em monitoramentos
-                monit = Monitoramento(
-                    ramal_id=ramal.id,
-                    status=novo_status,
-                    latencia=latencia,
-                    verificado_em=agora,
-                    erro=erro,
-                )
-                session.add(monit)
-
-                # Máquina de estados para incidentes
-                incidente_aberto_id = None
-                if status_anterior != StatusRamal.OFFLINE.value and novo_status == StatusRamal.OFFLINE.value:
-                    # TRANSIÇÃO: Ramal caiu (abrir novo incidente)
-                    ramal.ultimo_visto_offline = agora
-                    incidente = Incidente(
+                    # Registrar histórico em monitoramentos
+                    monit = Monitoramento(
                         ramal_id=ramal.id,
-                        iniciado_em=agora,
-                        ip_monitorado=ramal.ip,
-                        mac_cisco=ramal.mac_cisco,
-                        bloco=ramal.bloco,
-                        status_anterior=status_anterior,
-                        novo_status=novo_status,
-                        causa=erro or "Indisponibilidade de rede",
+                        status=novo_status,
+                        latencia=latencia,
+                        verificado_em=agora,
+                        erro=erro,
                     )
-                    session.add(incidente)
-                    session.flush()
-                    incidente_aberto_id = incidente.id
-                    logger.warning("Incidente aberto [#%s] para ramal %s", incidente.id, ramal.descricao)
+                    session.add(monit)
 
-                elif status_anterior == StatusRamal.OFFLINE.value and novo_status == StatusRamal.ONLINE.value:
-                    # TRANSIÇÃO: Ramal recuperou (fechar incidente aberto)
-                    incidente = session.query(Incidente).filter(
-                        Incidente.ramal_id == ramal.id,
-                        Incidente.encerrado_em == None,
-                    ).order_by(Incidente.iniciado_em.desc()).first()
+                    # Máquina de estados para incidentes
+                    incidente_aberto_id = None
+                    if status_anterior != StatusRamal.OFFLINE.value and novo_status == StatusRamal.OFFLINE.value:
+                        # TRANSIÇÃO: Ramal caiu (abrir novo incidente)
+                        ramal.ultimo_visto_offline = agora
+                        incidente = Incidente(
+                            ramal_id=ramal.id,
+                            iniciado_em=agora,
+                            ip_monitorado=ramal.ip,
+                            mac_cisco=ramal.mac_cisco,
+                            bloco=ramal.bloco,
+                            status_anterior=status_anterior,
+                            novo_status=novo_status,
+                            causa=erro or "Indisponibilidade de rede",
+                        )
+                        session.add(incidente)
+                        session.flush()
+                        incidente_aberto_id = incidente.id
+                        logger.warning("Incidente aberto [#%s] para ramal %s", incidente.id, ramal.descricao)
 
-                    duracao_sec = 0
-                    if incidente:
-                        duracao_sec = int((agora - incidente.iniciado_em).total_seconds())
-                        incidente.encerrado_em = agora
-                        incidente.duracao = duracao_sec
-                        incidente.latencia_final = latencia
-                        incidente.novo_status = StatusRamal.ONLINE.value
-                        logger.info("Incidente fechado [#%s] para ramal %s. Duração: %ss", incidente.id, ramal.descricao, duracao_sec)
-
-                    ramal.ultimo_visto_online = agora
-                    # Dispara notificação de restabelecimento se tiver demorado mais que o threshold
-                    if duracao_sec >= Config.ALERT_MIN_OFFLINE_SECONDS:
-                        alert_mgr.notificar_recuperacao(ramal.id, incidente.id if incidente else 0, duracao_sec)
-
-                elif novo_status == StatusRamal.OFFLINE.value:
-                    # Permanece offline: checar se deve disparar alerta de tempo prolongado
-                    if ramal.ultimo_visto_offline:
-                        off_sec = int((agora - ramal.ultimo_visto_offline).total_seconds())
-                        inc = session.query(Incidente).filter(
+                    elif status_anterior == StatusRamal.OFFLINE.value and novo_status == StatusRamal.ONLINE.value:
+                        # TRANSIÇÃO: Ramal recuperou (fechar incidente aberto)
+                        incidente = session.query(Incidente).filter(
                             Incidente.ramal_id == ramal.id,
                             Incidente.encerrado_em == None,
-                        ).first()
-                        if inc:
-                            alert_mgr.notificar_queda(ramal.id, inc.id, off_sec)
+                        ).order_by(Incidente.iniciado_em.desc()).first()
 
-                # Atualizar campos operacionais do ramal
-                ramal.status_atual = novo_status
-                ramal.ultima_verificacao = agora
-                ramal.ultima_latencia = latencia
-                ramal.ultimo_erro = erro
-                if novo_status == StatusRamal.ONLINE.value:
-                    ramal.ultimo_visto_online = agora
+                        duracao_sec = 0
+                        if incidente:
+                            duracao_sec = int((agora - incidente.iniciado_em).total_seconds())
+                            incidente.encerrado_em = agora
+                            incidente.duracao = duracao_sec
+                            incidente.latencia_final = latencia
+                            incidente.novo_status = StatusRamal.ONLINE.value
+                            logger.info("Incidente fechado [#%s] para ramal %s. Duração: %ss", incidente.id, ramal.descricao, duracao_sec)
+
+                        ramal.ultimo_visto_online = agora
+                        # Dispara notificação de restabelecimento se tiver demorado mais que o threshold
+                        if duracao_sec >= Config.ALERT_MIN_OFFLINE_SECONDS:
+                            alert_mgr.notificar_recuperacao(ramal.id, incidente.id if incidente else 0, duracao_sec)
+
+                    elif novo_status == StatusRamal.OFFLINE.value:
+                        # Permanece offline: checar se deve disparar alerta de tempo prolongado
+                        if ramal.ultimo_visto_offline:
+                            off_sec = int((agora - ramal.ultimo_visto_offline).total_seconds())
+                            inc = session.query(Incidente).filter(
+                                Incidente.ramal_id == ramal.id,
+                                Incidente.encerrado_em == None,
+                            ).first()
+                            if inc:
+                                alert_mgr.notificar_queda(ramal.id, inc.id, off_sec)
+
+                    # Atualizar campos operacionais do ramal
+                    ramal.status_atual = novo_status
+                    ramal.ultima_verificacao = agora
+                    ramal.ultima_latencia = latencia
+                    ramal.ultimo_erro = erro
+                    if novo_status == StatusRamal.ONLINE.value:
+                        ramal.ultimo_visto_online = agora
 
         except Exception as exc:
             logger.error("Erro ao persistir verificação do ramal %s: %s", ramal_id, exc)

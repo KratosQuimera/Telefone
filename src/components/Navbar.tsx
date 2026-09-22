@@ -70,19 +70,20 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Actions: scrollable on ultra-narrow, neatly aligned on normal */}
           <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto py-1 scrollbar-none">
-            {/* Ping Geral (Livre) */}
+            {/* Verificação Geral (Livre) */}
             <button
+              id="btn-verificacao-geral-nav"
               onClick={onPingAll}
               disabled={isScanning}
-              title="Disparar teste de conectividade em todos os ramais"
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all shrink-0 ${
+              title="Disparar verificação geral de conectividade em todos os ramais"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0 ${
                 isScanning 
-                  ? "bg-slate-800 text-slate-400 cursor-not-allowed" 
-                  : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs"
+                  ? "bg-slate-800 text-slate-400 cursor-not-allowed border border-slate-700" 
+                  : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm hover:shadow border border-emerald-500/50"
               }`}
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isScanning ? "animate-spin" : ""}`} />
-              <span className="hidden sm:inline">{isScanning ? "Varrendo..." : "Verificar"}</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${isScanning ? "animate-spin text-emerald-300" : ""}`} />
+              <span>{isScanning ? "Verificando Rede..." : "Verificação Geral"}</span>
             </button>
 
             {/* Sincronização Pasta de Rede */}

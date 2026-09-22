@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QCursor, QAction
 
+from haoc_voip.config import Config
 from haoc_voip.core.models import Ramal, Bloco, Setor, PerfilUsuario
 from haoc_voip.core.database import db
 from haoc_voip.core.monitor import monitor_engine, executar_ping
@@ -334,13 +335,22 @@ class MainWindow(QMainWindow):
         self._init_ui()
         self._carregar_dados_interface()
 
-        # Timer para sincronização contínua a cada 15s
+        # Timer para sincronização contínua a cada 15s da interface
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self._carregar_dados_interface)
         self.refresh_timer.start(15000)
 
         # Sincronização automática com a pasta da rede no startup (se configurada)
         QTimer.singleShot(600, self._sincronizar_rede_startup)
+
+        # Auto-verificação periódica de rede a cada 3 minutos (180.000 ms)
+        self.timer_autoverificacao = QTimer(self)
+        self.timer_autoverificacao.setInterval(180000)  # 3 minutos
+        self.timer_autoverificacao.timeout.connect(lambda: self._iniciar_varredura(interativo=False))
+        self.timer_autoverificacao.start()
+
+        # Ao iniciar o sistema, executar uma verificação inicial automática
+        QTimer.singleShot(1500, lambda: self._iniciar_varredura(interativo=False))
 
     def _conectar_sinais(self):
         signals.scan_started.connect(self._on_scan_started)
@@ -455,7 +465,7 @@ class MainWindow(QMainWindow):
         btn_verificar = QPushButton("🔄 Verificar Todos")
         btn_verificar.setObjectName("btnNavVerify")
         btn_verificar.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        btn_verificar.clicked.connect(self._iniciar_varredura)
+        btn_verificar.clicked.connect(lambda: self._iniciar_varredura(interativo=True))
         nav_layout.addWidget(btn_verificar)
 
         btn_novo = QPushButton("+ Novo Ramal")
@@ -754,8 +764,8 @@ class MainWindow(QMainWindow):
     # =========================================================================
 
     def _carregar_dados_interface(self):
-        """Busca ramais de store.json ou SQLite e recalcula estatísticas e blocos."""
-        store_p = Path("data/store.json")
+        """Busca ramais de store.json ou SQLite, sincroniza status mais recentes e recalcula estatísticas e blocos."""
+        store_p = Config.obter_caminho_dados("store.json")
         carregado_store = False
 
         if store_p.exists():
@@ -774,10 +784,48 @@ class MainWindow(QMainWindow):
                 ramais = session.query(Ramal).filter(Ramal.ativo == True).all()
                 self.todos_os_ramais = [r.to_dict() for r in ramais]
 
+        # Sincronizar status operacional mais recente do SQLite (se houver varreduras ou pings registrados)
+        try:
+            with db.session_scope() as session:
+                db_ramais = session.query(Ramal).filter(Ramal.ativo == True).all()
+                db_map_id = {r.id: r for r in db_ramais}
+                db_map_desc = {r.descricao: r for r in db_ramais if r.descricao}
+
+                for r in self.todos_os_ramais:
+                    db_r = db_map_id.get(r.get("id")) or db_map_desc.get(r.get("descricao"))
+                    if db_r:
+                        if db_r.status_atual in ["ONLINE", "OFFLINE"]:
+                            r["status"] = db_r.status_atual
+                        if db_r.ultima_latencia is not None:
+                            r["latencia_ms"] = db_r.ultima_latencia
+                            r["latencia"] = db_r.ultima_latencia
+                        if db_r.ip and not r.get("ip"):
+                            r["ip"] = db_r.ip
+        except Exception as e_sync:
+            logger.debug("Sincronização SQLite/Store: %s", e_sync)
+
         # Garantir coerência estrita de status: ONLINE ou OFFLINE
         for r in self.todos_os_ramais:
             if r.get("status") not in ["ONLINE", "OFFLINE"]:
                 r["status"] = "ONLINE" if r.get("ip") and str(r.get("ip")).strip() not in ["None", "null", ""] else "OFFLINE"
+
+        # Desduplicação rigorosa para garantir informação correta e evitar cards duplicados
+        ramais_desduplicados = []
+        ids_vistos = set()
+        chaves_vistas = set()
+        for r in self.todos_os_ramais:
+            rid = r.get("id")
+            num_desc = (str(r.get("numero") or "").strip(), str(r.get("descricao") or "").strip().lower())
+            if rid is not None and rid in ids_vistos:
+                continue
+            if num_desc[0] and num_desc in chaves_vistas:
+                continue
+            if rid is not None:
+                ids_vistos.add(rid)
+            if num_desc[0]:
+                chaves_vistas.add(num_desc)
+            ramais_desduplicados.append(r)
+        self.todos_os_ramais = ramais_desduplicados
 
         tot = len(self.todos_os_ramais)
         on = sum(1 for r in self.todos_os_ramais if r.get("status") == "ONLINE")
@@ -860,10 +908,14 @@ class MainWindow(QMainWindow):
         self._aplicar_filtros()
 
     def _renderizar_grade_ramais(self):
+        # Limpar widgets anteriores de forma limpa, ocultando e removendo o parent para não duplicar visualmente
         while self.grid_ramais.count() > 0:
             item = self.grid_ramais.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            w = item.widget()
+            if w:
+                w.hide()
+                w.setParent(None)
+                w.deleteLater()
 
         self.cartoes_map.clear()
 
@@ -908,10 +960,17 @@ class MainWindow(QMainWindow):
 
         row = 0
         col = 0
+        cards_desenhados = set()
 
         for r_dict in ramais_visiveis:
+            rid = r_dict.get("id")
+            if rid is not None and rid in cards_desenhados:
+                continue
+            if rid is not None:
+                cards_desenhados.add(rid)
+
             card = RamalCard(r_dict, parent_window=self)
-            self.cartoes_map[r_dict["id"]] = card
+            self.cartoes_map[rid] = card
             self.grid_ramais.addWidget(card, row, col)
 
             col += 1
@@ -1033,7 +1092,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(lbl_desc)
 
         # Ler config atual
-        cfg_path = Path("data/network_config.json")
+        cfg_path = Config.obter_caminho_dados("network_config.json")
         caminho_atual = ""
         auto_sync_atual = True
         if cfg_path.exists():
@@ -1125,7 +1184,7 @@ class MainWindow(QMainWindow):
     def _sincronizar_rede_startup(self):
         """Busca o JSON assim que iniciar em uma pasta da rede se estiver configurado."""
         try:
-            cfg_path = Path("data/network_config.json")
+            cfg_path = Config.obter_caminho_dados("network_config.json")
             if cfg_path.exists():
                 with open(cfg_path, "r", encoding="utf-8") as f:
                     cfg = json.load(f)
@@ -1219,12 +1278,25 @@ class MainWindow(QMainWindow):
                 })
                 id_seq += 1
 
-            store_path = Path("data/store.json")
+            store_path = Config.obter_caminho_dados("store.json")
             store_path.parent.mkdir(parents=True, exist_ok=True)
+            d_store_atual = {}
+            if store_path.exists():
+                try:
+                    with open(store_path, "r", encoding="utf-8") as f_st:
+                        d_store_atual = json.load(f_st)
+                except Exception:
+                    pass
+            d_store_atual["ramais"] = lista_final
             with open(store_path, "w", encoding="utf-8") as f:
-                json.dump({"ramais": lista_final}, f, indent=2, ensure_ascii=False)
+                json.dump(d_store_atual, f, indent=2, ensure_ascii=False)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except Exception:
+                    pass
 
-            cfg_path = Path("data/network_config.json")
+            cfg_path = Config.obter_caminho_dados("network_config.json")
             if cfg_path.exists():
                 try:
                     with open(cfg_path, "r", encoding="utf-8") as f:
@@ -1234,6 +1306,11 @@ class MainWindow(QMainWindow):
                     c_dict["mensagem"] = f"{len(lista_final)} ramais sincronizados de {arquivo_json.name}"
                     with open(cfg_path, "w", encoding="utf-8") as f:
                         json.dump(c_dict, f, indent=2, ensure_ascii=False)
+                        f.flush()
+                        try:
+                            os.fsync(f.fileno())
+                        except Exception:
+                            pass
                 except Exception:
                     pass
 
@@ -1383,13 +1460,13 @@ class MainWindow(QMainWindow):
             return False
 
         arquivos = [
-            Path("data/store.json"),
-            Path("data/modelo_ramais_haoc.json"),
-            Path("data/sample_legacy_data.json"),
+            Config.obter_caminho_dados("store.json"),
+            Config.obter_caminho_dados("modelo_ramais_haoc.json"),
+            Config.obter_caminho_dados("sample_legacy_data.json"),
         ]
 
         # Verificar se há pasta de rede configurada
-        cfg_p = Path("data/network_config.json")
+        cfg_p = Config.obter_caminho_dados("network_config.json")
         if cfg_p.exists():
             try:
                 with open(cfg_p, "r", encoding="utf-8") as f:
@@ -1436,6 +1513,11 @@ class MainWindow(QMainWindow):
                 if alterado:
                     with open(arq, "w", encoding="utf-8") as f:
                         json.dump(dados, f, ensure_ascii=False, indent=2)
+                        f.flush()
+                        try:
+                            os.fsync(f.fileno())
+                        except Exception:
+                            pass
             except Exception as ex:
                 logger.warning("Erro ao sincronizar exclusão no JSON %s: %s", arq, ex)
 
@@ -1452,40 +1534,141 @@ class MainWindow(QMainWindow):
     # PING E VARREDURA CONCORRENTE
     # =========================================================================
 
-    def _iniciar_varredura(self):
+    def _iniciar_varredura(self, interativo: bool = False):
         if monitor_engine.em_execucao:
-            QMessageBox.information(self, "Aviso", "A varredura de ICMP já está em andamento.")
+            if interativo:
+                QMessageBox.information(self, "Aviso", "A varredura de ICMP já está em andamento.")
             return
 
         signals.scan_started.emit()
+
+        def _progresso_cb(evento):
+            if evento.get("tipo") == "PROGRESSO":
+                proc = evento.get("processados", 0)
+                tot = evento.get("total", 0)
+                msg = f"Varredura geral: {proc}/{tot} ramais verificados..."
+                signals.scan_progress.emit(proc, tot, msg)
+
+        monitor_engine.register_listener(_progresso_cb)
 
         def _worker():
             try:
                 resumo = monitor_engine.executar_varredura()
                 signals.scan_finished.emit(resumo)
-            except Exception:
+            except Exception as exc:
+                logger.error("Erro durante a varredura geral: %s", exc)
                 signals.scan_canceled.emit()
+            finally:
+                monitor_engine.unregister_listener(_progresso_cb)
 
         threading.Thread(target=_worker, daemon=True).start()
 
     def disparar_ping_individual(self, ramal_id: int):
-        self.lbl_sb_msg.setText(f"Enviando pacote ICMP para ramal #{ramal_id}...")
+        card = self.cartoes_map.get(ramal_id)
+        card_data = card.ramal_data if card else {}
+        ip_card = str(card_data.get("ip") or "").strip()
+        desc_card = str(card_data.get("descricao") or "").strip()
+        num_card = str(card_data.get("numero") or "").strip()
+
+        if not ip_card:
+            mem_r = next((r for r in self.todos_os_ramais if r.get("id") == ramal_id), None)
+            if mem_r:
+                ip_card = str(mem_r.get("ip") or "").strip()
+                if not desc_card:
+                    desc_card = str(mem_r.get("descricao") or "").strip()
+                if not num_card:
+                    num_card = str(mem_r.get("numero") or "").strip()
+
+        self.lbl_sb_msg.setText(f"Enviando pacote ICMP para ramal #{ramal_id} ({ip_card or 'verificando'})...")
 
         def _worker():
-            with db.session_scope() as session:
-                r = session.query(Ramal).filter(Ramal.id == ramal_id).first()
-                if not r or not r.ip:
-                    signals.ping_result.emit(ramal_id, False, 0.0, "Sem IP configurado")
-                    return
-                sucesso, lat, erro = executar_ping(r.ip)
-                if sucesso:
-                    r.status_atual = "ONLINE"
-                    r.ultima_latencia = lat
-                    r.ultimo_visto_online = datetime.utcnow()
-                else:
-                    r.status_atual = "OFFLINE"
-                    r.ultimo_visto_offline = datetime.utcnow()
-                signals.ping_result.emit(ramal_id, sucesso, lat or 0.0, erro or "")
+            # 1. Determinar endereço IP do SQLite ou do cartão
+            ip_alvo = None
+            try:
+                with db.session_scope() as session:
+                    r = session.query(Ramal).filter(Ramal.id == ramal_id).first()
+                    if not r and num_card:
+                        r = session.query(Ramal).filter(Ramal.descricao.like(f"%{num_card}%")).first()
+                    if not r and desc_card:
+                        r = session.query(Ramal).filter(Ramal.descricao == desc_card).first()
+
+                    if r and r.ip and str(r.ip).strip() and str(r.ip).strip().lower() not in ["none", "null"]:
+                        ip_alvo = str(r.ip).strip()
+                    elif ip_card and ip_card.lower() not in ["none", "null"]:
+                        ip_alvo = ip_card
+            except Exception as e_ip:
+                logger.warning("Erro ao consultar IP para ping: %s", e_ip)
+                if ip_card and ip_card.lower() not in ["none", "null"]:
+                    ip_alvo = ip_card
+
+            if not ip_alvo:
+                signals.ping_result.emit(ramal_id, False, 0.0, "Sem IP configurado")
+                return
+
+            # 2. Executar teste real de ping ICMP
+            sucesso, lat, erro = executar_ping(ip_alvo, timeout_seconds=2.0, retries=1)
+            novo_status = "ONLINE" if sucesso else "OFFLINE"
+            latencia_val = lat if sucesso else None
+            agora = datetime.utcnow()
+
+            # 3. Persistir status no SQLite com commit concluído
+            try:
+                with db.session_scope() as session:
+                    r = session.query(Ramal).filter(Ramal.id == ramal_id).first()
+                    if not r and num_card:
+                        r = session.query(Ramal).filter(Ramal.descricao.like(f"%{num_card}%")).first()
+                    if not r and desc_card:
+                        r = session.query(Ramal).filter(Ramal.descricao == desc_card).first()
+
+                    if r:
+                        r.status_atual = novo_status
+                        r.ultima_latencia = latencia_val
+                        r.ultima_verificacao = agora
+                        if ip_alvo and (not r.ip or str(r.ip).strip() == ""):
+                            r.ip = ip_alvo
+                        if sucesso:
+                            r.ultimo_visto_online = agora
+                            r.ultimo_erro = None
+                        else:
+                            r.ultimo_visto_offline = agora
+                            r.ultimo_erro = erro or "Inalcançável / Timeout"
+            except Exception as e_db:
+                logger.error("Erro ao persistir status do ping no SQLite: %s", e_db)
+
+            # 4. Sincronizar imediatamente no data/store.json
+            store_p = Config.obter_caminho_dados("store.json")
+            if store_p.exists():
+                try:
+                    with open(store_p, "r", encoding="utf-8") as f:
+                        d_store = json.load(f)
+                    ramais_s = d_store.get("ramais", [])
+                    alterou = False
+                    for item_s in ramais_s:
+                        match_id = (str(item_s.get("id")) == str(ramal_id))
+                        match_num = (num_card and str(item_s.get("numero") or "").strip() == num_card)
+                        match_desc = (desc_card and item_s.get("descricao") == desc_card)
+                        if match_id or match_num or match_desc:
+                            item_s["status"] = novo_status
+                            item_s["latencia_ms"] = round(lat, 1) if sucesso else None
+                            item_s["latencia"] = round(lat, 1) if sucesso else None
+                            item_s["ultimo_ping"] = datetime.now().isoformat()
+                            if ip_alvo:
+                                item_s["ip"] = ip_alvo
+                            alterou = True
+                            break
+                    if alterou:
+                        with open(store_p, "w", encoding="utf-8") as f:
+                            json.dump(d_store, f, indent=2, ensure_ascii=False)
+                            f.flush()
+                            try:
+                                os.fsync(f.fileno())
+                            except Exception:
+                                pass
+                except Exception as ex_store:
+                    logger.warning("Falha ao sincronizar store.json no ping individual: %s", ex_store)
+
+            # 5. Emitir sinal para a interface principal
+            signals.ping_result.emit(ramal_id, sucesso, lat or 0.0, erro or "")
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -1514,25 +1697,45 @@ class MainWindow(QMainWindow):
         self.lbl_sb_msg.setText("Varredura cancelada.")
 
     def _on_ping_result(self, ramal_id: int, sucesso: bool, latencia: float, erro: str):
-        card = self.cartoes_map.get(ramal_id)
-        status_txt = f"Ping ramal #{ramal_id}: {'ONLINE (' + str(round(latencia, 1)) + 'ms)' if sucesso else 'OFFLINE (' + erro + ')'}"
+        novo_status = "ONLINE" if sucesso else "OFFLINE"
+        status_txt = f"Ping ramal #{ramal_id}: {'ONLINE (' + str(round(latencia, 1)) + 'ms)' if sucesso else 'OFFLINE (' + (erro or 'Timeout') + ')'}"
         self.lbl_sb_msg.setText(status_txt)
-        if card:
-            card.ramal_data["status"] = "ONLINE" if sucesso else "OFFLINE"
-            card.ramal_data["latencia_ms"] = latencia if sucesso else None
-            # Recarregar para reordenar dinamicamente caso o status tenha mudado
-            self._carregar_dados_interface()
 
-        # Exibir feedback no diálogo "Resultado do Ping" com contraste institucional
+        card = self.cartoes_map.get(ramal_id)
+        desc_card = card.ramal_data.get("descricao") if card else None
+        num_card = str(card.ramal_data.get("numero")) if card and card.ramal_data.get("numero") else None
+
+        # 1. Atualizar em memória self.todos_os_ramais imediatamente
+        for r in self.todos_os_ramais:
+            match_id = (str(r.get("id")) == str(ramal_id))
+            match_num = (num_card and str(r.get("numero") or "").strip() == num_card)
+            match_desc = (desc_card and r.get("descricao") == desc_card)
+            if match_id or match_num or match_desc:
+                r["status"] = novo_status
+                r["latencia_ms"] = round(latencia, 1) if sucesso else None
+                r["latencia"] = round(latencia, 1) if sucesso else None
+                r["ultimo_ping"] = datetime.now().isoformat()
+                break
+
+        # 2. Se o card existir, atualizar seus dados em cache
+        if card:
+            card.ramal_data["status"] = novo_status
+            card.ramal_data["latencia_ms"] = latencia if sucesso else None
+            card.ramal_data["latencia"] = latencia if sucesso else None
+
+        # 3. Recarregar interface completa para atualizar métricas do topo, contadores e reordenação
+        self._carregar_dados_interface()
+
+        # 4. Exibir feedback institucional no diálogo "Resultado do Ping"
         if sucesso:
             QMessageBox.information(
                 self,
                 "Resultado do Ping",
-                f"✅ Conexão estabelecida com sucesso!\nLatência: {latencia:.1f} ms"
+                f"✅ Conexão estabelecida com sucesso!\nLatência: {latencia:.1f} ms\n\nO status do ramal foi atualizado para ONLINE."
             )
         else:
             QMessageBox.warning(
                 self,
                 "Resultado do Ping",
-                f"❌ Falha na conexão com o ramal #{ramal_id}!\nMotivo: {erro or 'Inalcançável / Timeout'}"
+                f"❌ Falha na conexão com o ramal #{ramal_id}!\nMotivo: {erro or 'Inalcançável / Timeout'}\n\nO status do ramal permanece como OFFLINE."
             )

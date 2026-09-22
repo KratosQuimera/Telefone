@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { 
   Search, 
   RefreshCw, 
@@ -7,7 +7,8 @@ import {
   XCircle, 
   PhoneCall,
   PackageCheck,
-  ShieldAlert
+  ShieldAlert,
+  Clock
 } from "lucide-react";
 import { Ramal, Incidente, Stats, Usuario, LogAuditoria } from "./types";
 import { Navbar } from "./components/Navbar";
@@ -60,6 +61,7 @@ export default function App() {
   // Estados de Operação e Varredura Otimizada
   const [loading, setLoading] = useState(true);
   const [isScanning, setIsScanning] = useState(false);
+  const [ultimaVerificacao, setUltimaVerificacao] = useState<string | null>(null);
   const [scanProgress, setScanProgress] = useState<{
     loteAtual: number;
     totalLotes: number;
@@ -67,6 +69,14 @@ export default function App() {
     ramaisProcessados: number;
     totalRamais: number;
   } | null>(null);
+
+  // Referências para closures de timers e auto-verificação
+  const ramaisRef = useRef<Ramal[]>(ramais);
+  const handlePingAllRef = useRef<() => Promise<void>>();
+
+  useEffect(() => {
+    ramaisRef.current = ramais;
+  }, [ramais]);
 
   // Interceptor de Áreas Sensíveis (Solicita senha SOMENTE quando necessário)
   const executarAcaoSensivel = (motivo: string, acao: () => void) => {
@@ -90,7 +100,7 @@ export default function App() {
     }
   };
 
-  // Carregar dados da API
+  // Carregar dados da API com desduplicação rigorosa
   const carregarDados = async () => {
     try {
       const [resRamais, resStats, resIncidentes, resAuditoria] = await Promise.all([
@@ -100,7 +110,22 @@ export default function App() {
         fetch("/api/auditoria"),
       ]);
 
-      if (resRamais.ok) setRamais(await resRamais.json());
+      if (resRamais.ok) {
+        const rawRamais: Ramal[] = await resRamais.json();
+        const vistos = new Set<string>();
+        const chavesVistas = new Set<string>();
+        const ramaisUnicos: Ramal[] = [];
+        for (const r of rawRamais) {
+          const chaveId = String(r.id);
+          const chaveNumeroDesc = `${String(r.numero || "").trim()}-${String(r.descricao || "").trim().toLowerCase()}`;
+          if (vistos.has(chaveId)) continue;
+          if (r.numero && chavesVistas.has(chaveNumeroDesc)) continue;
+          vistos.add(chaveId);
+          if (r.numero) chavesVistas.add(chaveNumeroDesc);
+          ramaisUnicos.push(r);
+        }
+        setRamais(ramaisUnicos);
+      }
       if (resStats.ok) setStats(await resStats.json());
       if (resIncidentes.ok) setIncidentes(await resIncidentes.json());
       if (resAuditoria.ok) setAuditoriaLogs(await resAuditoria.json());
@@ -111,83 +136,165 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
-    carregarDados();
-    const interval = setInterval(carregarDados, 15000); // Atualização periódica
-    return () => clearInterval(interval);
-  }, []);
-
-  // Ping em lotes (Dividido para não sobrecarregar memória da máquina e não atrapalhar o processamento)
-  const handlePingAll = async () => {
-    const ativos = ramais.filter((r) => r.ativo);
+  // Fallback de ping em lotes caso necessário
+  const executarPingEmLotes = async () => {
+    const lista = ramaisRef.current.length > 0 ? ramaisRef.current : [];
+    const ativos = lista.filter((r) => r.ativo);
     if (ativos.length === 0) return;
 
-    setIsScanning(true);
-    // Divisão em lotes gerenciáveis (15 por vez) para manter baixa pegada de memória e CPU
-    const BATCH_SIZE = 15;
+    const BATCH_SIZE = 25;
     const lotes: Ramal[][] = [];
     for (let i = 0; i < ativos.length; i += BATCH_SIZE) {
       lotes.push(ativos.slice(i, i + BATCH_SIZE));
     }
 
+    for (let i = 0; i < lotes.length; i++) {
+      const lote = lotes[i];
+      const ids = lote.map((r) => r.id);
+
+      setScanProgress({
+        loteAtual: i + 1,
+        totalLotes: lotes.length,
+        percentual: Math.round(((i + 1) / lotes.length) * 100),
+        ramaisProcessados: Math.min((i + 1) * BATCH_SIZE, ativos.length),
+        totalRamais: ativos.length,
+      });
+
+      const res = await fetch("/api/ramais/ping-lote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.resultados && Array.isArray(data.resultados)) {
+          const mapRes = new Map<number, { status: "ONLINE" | "OFFLINE"; latencia_ms: number | null }>();
+          data.resultados.forEach((item: any) => {
+            mapRes.set(item.id, { status: item.status, latencia_ms: item.latencia_ms });
+          });
+
+          setRamais((prev) =>
+            prev.map((r) => {
+              const up = mapRes.get(r.id);
+              if (up) {
+                return {
+                  ...r,
+                  status: up.status,
+                  latencia_ms: up.latencia_ms,
+                  ultimo_ping: new Date().toISOString(),
+                };
+              }
+              return r;
+            })
+          );
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+  };
+
+  // Verificação Geral (Rápida, Oculta, Sem CMD, Atualiza o JSON e os Cards)
+  const handlePingAll = async () => {
+    if (isScanning) return;
+    setIsScanning(true);
+
     try {
-      for (let i = 0; i < lotes.length; i++) {
-        const lote = lotes[i];
-        const ids = lote.map((r) => r.id);
+      const totalEstimado = ramaisRef.current.length > 0 ? ramaisRef.current.length : 820;
+      setScanProgress({
+        loteAtual: 1,
+        totalLotes: 2,
+        percentual: 30,
+        ramaisProcessados: Math.round(totalEstimado * 0.3),
+        totalRamais: totalEstimado,
+      });
 
+      // Disparar ping-all no backend
+      const res = await fetch("/api/ping-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      if (res.ok) {
+        const data = await res.json();
         setScanProgress({
-          loteAtual: i + 1,
-          totalLotes: lotes.length,
-          percentual: Math.round(((i + 1) / lotes.length) * 100),
-          ramaisProcessados: Math.min((i + 1) * BATCH_SIZE, ativos.length),
-          totalRamais: ativos.length,
+          loteAtual: 2,
+          totalLotes: 2,
+          percentual: 100,
+          ramaisProcessados: data.total || totalEstimado,
+          totalRamais: data.total || totalEstimado,
         });
 
-        const res = await fetch("/api/ramais/ping-lote", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ids }),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          if (data.resultados && Array.isArray(data.resultados)) {
-            const mapRes = new Map<number, { status: "ONLINE" | "OFFLINE"; latencia_ms: number | null }>();
-            data.resultados.forEach((item: any) => {
-              mapRes.set(item.id, { status: item.status, latencia_ms: item.latencia_ms });
-            });
-
-            // Atualização progressiva sem bloquear a renderização nem travar a máquina
-            setRamais((prev) =>
-              prev.map((r) => {
-                const up = mapRes.get(r.id);
-                if (up) {
-                  return {
-                    ...r,
-                    status: up.status,
-                    latencia_ms: up.latencia_ms,
-                    ultimo_ping: new Date().toISOString(),
-                  };
-                }
-                return r;
-              })
-            );
+        if (Array.isArray(data.ramais) && data.ramais.length > 0) {
+          const vistos = new Set<string>();
+          const chavesVistas = new Set<string>();
+          const ramaisUnicos: Ramal[] = [];
+          for (const r of data.ramais) {
+            const chaveId = String(r.id);
+            const chaveNumDesc = `${String(r.numero || "").trim()}-${String(r.descricao || "").trim().toLowerCase()}`;
+            if (vistos.has(chaveId)) continue;
+            if (r.numero && chavesVistas.has(chaveNumDesc)) continue;
+            vistos.add(chaveId);
+            if (r.numero) chavesVistas.add(chaveNumDesc);
+            ramaisUnicos.push(r);
           }
+          setRamais(ramaisUnicos);
         }
 
-        // Pausa breve de 100ms para liberação de memória no ciclo de eventos
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        if (data.stats) {
+          setStats(data.stats);
+        }
+
+        const agoraStr = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        setUltimaVerificacao(agoraStr);
+      } else {
+        console.warn("Rota /api/ping-all retornou erro, usando fallback por lotes...");
+        await executarPingEmLotes();
       }
 
-      // Ao finalizar todos os lotes, recarrega estatísticas e incidentes globais
       await carregarDados();
     } catch (err) {
-      console.error("Erro durante a varredura em lotes:", err);
+      console.error("Erro durante a verificação geral:", err);
+      try {
+        await executarPingEmLotes();
+      } catch (e2) {
+        console.error("Erro no fallback de ping:", e2);
+      }
     } finally {
       setIsScanning(false);
       setScanProgress(null);
     }
   };
+
+  // Mantém a referência da função atualizada para timers sem problemas de closure
+  handlePingAllRef.current = handlePingAll;
+
+  useEffect(() => {
+    // 1. Carregamento inicial de dados
+    carregarDados().then(() => {
+      // 2. Disparar verificação inicial automática ao iniciar o sistema (silenciosa e oculta)
+      setTimeout(() => {
+        if (handlePingAllRef.current) {
+          handlePingAllRef.current();
+        }
+      }, 1000);
+    });
+
+    // 3. Atualização leve de interface periódica (15s)
+    const intervalPolling = setInterval(carregarDados, 15000);
+
+    // 4. Auto-verificação da rede a cada 3 minutos (180.000 ms)
+    const intervalAutoScan = setInterval(() => {
+      if (handlePingAllRef.current) {
+        handlePingAllRef.current();
+      }
+    }, 180000);
+
+    return () => {
+      clearInterval(intervalPolling);
+      clearInterval(intervalAutoScan);
+    };
+  }, []);
 
   // Ping individual (Ação Livre de monitoramento)
   const handlePingRamal = async (id: number) => {
@@ -323,9 +430,12 @@ export default function App() {
   // 1. Ramais OFFLINE aparecem no topo piscando para maior atenção
   // 2. Assim que o erro for sanado (ONLINE), voltam à sequência em ordem alfabética
   const ramaisFiltrados = useMemo(() => {
+    const idsVistos = new Set<string | number>();
     return ramais
       .filter((r) => {
         if (!r) return false;
+        if (idsVistos.has(r.id)) return false;
+        idsVistos.add(r.id);
         if (blocoSelecionado !== "TODOS" && r.bloco !== blocoSelecionado) return false;
         if (statusFiltro !== "TODOS" && r.status !== statusFiltro) return false;
         if (busca.trim()) {
@@ -421,7 +531,29 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {ultimaVerificacao && (
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-950/60 border border-emerald-800/60 text-emerald-300 text-xs font-mono">
+                <Clock className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Última verificação: {ultimaVerificacao}</span>
+              </div>
+            )}
+
+            <button
+              id="btn-verificacao-geral-banner"
+              onClick={handlePingAll}
+              disabled={isScanning}
+              title="Disparar verificação geral em todos os ramais da rede"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-xs ${
+                isScanning
+                  ? "bg-slate-800 text-slate-400 cursor-not-allowed border border-slate-700"
+                  : "bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-500"
+              }`}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isScanning ? "animate-spin" : ""}`} />
+              <span>{isScanning ? "Verificando Rede..." : "Verificação Geral"}</span>
+            </button>
+
             <button
               onClick={() => setModalNetworkOpen(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1a263d] hover:bg-[#223352] text-sky-300 text-xs font-semibold border border-sky-800/80 shadow-xs transition"

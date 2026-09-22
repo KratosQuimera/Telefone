@@ -339,17 +339,36 @@ function getInitialData(): DatabaseSchema {
 class Store {
   private data: DatabaseSchema;
   private networkConfig: NetworkSyncConfig;
+  private lastMtimeMs: number = 0;
 
   constructor() {
     this.data = this.load();
-    // Garantir que todos os ramais sejam estritamente ONLINE ou OFFLINE
+    if (fs.existsSync(DB_PATH)) {
+      try {
+        this.lastMtimeMs = fs.statSync(DB_PATH).mtimeMs;
+      } catch (_) {}
+    }
+    // Garantir que todos os ramais sejam estritamente ONLINE ou OFFLINE com base em IP
     for (const r of this.data.ramais) {
-      if (r.status !== "OFFLINE") {
-        r.status = "ONLINE";
-      }
+      const temIp = r.ip && r.ip.trim() !== "" && r.ip.trim().toLowerCase() !== "none" && r.ip.trim().toLowerCase() !== "null" && r.ip.trim() !== "-";
+      r.status = temIp ? "ONLINE" : "OFFLINE";
+      if (!temIp) r.latencia_ms = null;
     }
     this.ensureMasterUser();
     this.save();
+
+    // Monitorar alterações externas no arquivo store.json (ex: feitas pelo app desktop ou edição direta)
+    try {
+      if (fs.existsSync(DB_PATH)) {
+        fs.watchFile(DB_PATH, { interval: 1000 }, (curr, prev) => {
+          if (curr.mtimeMs !== prev.mtimeMs && curr.mtimeMs !== this.lastMtimeMs) {
+            this.reloadIfChanged();
+          }
+        });
+      }
+    } catch (watchErr) {
+      console.warn("[Store] fs.watchFile não inicializado:", watchErr);
+    }
 
     // Carregar e tentar sincronizar automaticamente na inicialização a partir do caminho de rede
     this.networkConfig = this.loadNetworkConfig();
@@ -473,7 +492,11 @@ class Store {
       }
       if (fs.existsSync(DB_PATH)) {
         const raw = fs.readFileSync(DB_PATH, "utf-8");
-        return JSON.parse(raw);
+        const parsed = JSON.parse(raw);
+        try {
+          this.lastMtimeMs = fs.statSync(DB_PATH).mtimeMs;
+        } catch (_) {}
+        return parsed;
       }
     } catch (e) {
       console.warn("[Store] Falha ao carregar store.json, gerando dados padrão:", e);
@@ -488,14 +511,48 @@ class Store {
       if (!fs.existsSync(DATA_DIR)) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
       }
-      fs.writeFileSync(DB_PATH, JSON.stringify(state, null, 2), "utf-8");
+      const jsonStr = JSON.stringify(state, null, 2);
+      const tmpPath = path.join(DATA_DIR, `.store.tmp.${Date.now()}`);
+      fs.writeFileSync(tmpPath, jsonStr, "utf-8");
+      fs.renameSync(tmpPath, DB_PATH);
+      try {
+        this.lastMtimeMs = fs.statSync(DB_PATH).mtimeMs;
+      } catch (_) {}
     } catch (err) {
-      console.error("[Store] Erro ao persistir dados:", err);
+      console.error("[Store] Erro ao persistir atomicamente, tentando fallback direto:", err);
+      try {
+        fs.writeFileSync(DB_PATH, JSON.stringify(state, null, 2), "utf-8");
+        try {
+          this.lastMtimeMs = fs.statSync(DB_PATH).mtimeMs;
+        } catch (_) {}
+      } catch (err2) {
+        console.error("[Store] Erro crítico ao persistir dados:", err2);
+      }
     }
   }
 
   private save() {
     this.persist(this.data);
+  }
+
+  public reloadIfChanged(): boolean {
+    try {
+      if (!fs.existsSync(DB_PATH)) return false;
+      const stat = fs.statSync(DB_PATH);
+      if (stat.mtimeMs !== this.lastMtimeMs) {
+        const raw = fs.readFileSync(DB_PATH, "utf-8");
+        const parsed = JSON.parse(raw);
+        if (parsed && Array.isArray(parsed.ramais)) {
+          this.data = parsed;
+          this.lastMtimeMs = stat.mtimeMs;
+          console.log(`[Store] Mudança detectada em data/store.json (${this.data.ramais.length} ramais sincronizados do disco).`);
+          return true;
+        }
+      }
+    } catch (e) {
+      // Ignorar erros transitórios de leitura
+    }
+    return false;
   }
 
   public ensureMasterUser() {
@@ -604,70 +661,85 @@ class Store {
     return result;
   }
 
-  public getRamalById(id: number) {
-    return this.data.ramais.find((r) => r.id === id && r.ativo);
+  public getRamalById(id: number | string) {
+    this.reloadIfChanged();
+    const idStr = String(id).trim();
+    return this.data.ramais.find((r) => String(r.id).trim() === idStr && r.ativo);
   }
 
   public salvarRamal(novoRamal: Partial<Ramal>, usuarioNome: string): Ramal {
+    this.reloadIfChanged();
     let salvo: Ramal;
 
-    if (novoRamal.id) {
-      const idx = this.data.ramais.findIndex((r) => r.id === novoRamal.id);
-      if (idx >= 0) {
-        this.data.ramais[idx] = {
-          ...this.data.ramais[idx],
-          ...novoRamal,
-          numero: String(novoRamal.numero || this.data.ramais[idx].numero).trim(),
-          descricao: String(novoRamal.descricao || this.data.ramais[idx].descricao).trim(),
-        } as Ramal;
-        salvo = this.data.ramais[idx];
-        this.addLog(usuarioNome, "RAMAL_ATUALIZADO", `Ramal ${salvo.numero} (${salvo.descricao}) editado.`);
-        this.save();
-      } else {
-        const criado: Ramal = {
-          id: novoRamal.id,
-          numero: String(novoRamal.numero || "2000").trim(),
-          descricao: String(novoRamal.descricao || "Novo Ramal VoIP").trim(),
-          bloco: novoRamal.bloco || "Bloco Central",
-          setor: novoRamal.setor || "Geral",
-          ip: novoRamal.ip || "192.168.10.100",
-          mac_cisco: novoRamal.mac_cisco || "00:27:0D:00:00:00",
-          modelo: novoRamal.modelo || "Cisco CP-7841",
-          status: "ONLINE",
-          latencia_ms: 15,
-          ultimo_ping: new Date().toISOString(),
-          ativo: true,
-          criado_em: new Date().toISOString(),
-        };
-        this.data.ramais.push(criado);
-        salvo = criado;
-        this.addLog(usuarioNome, "RAMAL_CRIADO", `Novo ramal ${criado.numero} cadastrado no setor ${criado.setor}.`);
-        this.save();
-      }
+    const targetIdStr = novoRamal.id !== undefined && novoRamal.id !== null ? String(novoRamal.id).trim() : "";
+    const targetNumStr = novoRamal.numero ? String(novoRamal.numero).trim() : "";
+    const targetDescLower = novoRamal.descricao ? String(novoRamal.descricao).trim().toLowerCase() : "";
+
+    // 1. Procurar ramal existente por ID, número ou descrição exata
+    let idx = -1;
+    if (targetIdStr) {
+      idx = this.data.ramais.findIndex((r) => String(r.id).trim() === targetIdStr);
+    }
+    if (idx === -1 && targetNumStr) {
+      idx = this.data.ramais.findIndex((r) => String(r.numero).trim() === targetNumStr);
+    }
+    if (idx === -1 && targetDescLower) {
+      idx = this.data.ramais.findIndex((r) => String(r.descricao).trim().toLowerCase() === targetDescLower);
+    }
+
+    const ipLimpo = novoRamal.ip ? String(novoRamal.ip).trim() : "";
+    const temIp = ipLimpo !== "" && ipLimpo.toLowerCase() !== "none" && ipLimpo.toLowerCase() !== "null" && ipLimpo !== "-";
+    const statusReal = temIp ? "ONLINE" : "OFFLINE";
+    const latenciaReal = temIp ? (novoRamal.latencia_ms || 14) : null;
+
+    if (idx >= 0) {
+      const rAtual = this.data.ramais[idx];
+      this.data.ramais[idx] = {
+        ...rAtual,
+        ...novoRamal,
+        id: rAtual.id,
+        numero: targetNumStr || rAtual.numero,
+        descricao: novoRamal.descricao !== undefined ? String(novoRamal.descricao).trim() : rAtual.descricao,
+        bloco: novoRamal.bloco !== undefined ? String(novoRamal.bloco).trim() : rAtual.bloco,
+        setor: novoRamal.setor !== undefined ? String(novoRamal.setor).trim() : rAtual.setor,
+        ip: ipLimpo,
+        mac_cisco: novoRamal.mac_cisco !== undefined ? String(novoRamal.mac_cisco).trim() : rAtual.mac_cisco,
+        modelo: novoRamal.modelo !== undefined ? String(novoRamal.modelo).trim() : (rAtual.modelo || "Cisco CP-7841"),
+        status: statusReal,
+        latencia_ms: latenciaReal,
+        ativo: true,
+        ultimo_ping: new Date().toISOString(),
+      };
+      salvo = this.data.ramais[idx];
+      this.addLog(usuarioNome, "RAMAL_ATUALIZADO", `Ramal ${salvo.numero} (${salvo.descricao}) alterado e salvo com sucesso.`);
     } else {
-      const maxId = this.data.ramais.reduce((acc, curr) => Math.max(acc, curr.id), 100);
+      const maxId = this.data.ramais.reduce((acc, curr) => Math.max(acc, Number(curr.id) || 100), 100);
+      const novoId = targetIdStr && !isNaN(Number(targetIdStr)) ? Number(targetIdStr) : maxId + 1;
       const criado: Ramal = {
-        id: maxId + 1,
-        numero: String(novoRamal.numero || "2000").trim(),
-        descricao: String(novoRamal.descricao || "Novo Ramal VoIP").trim(),
-        bloco: novoRamal.bloco || "Bloco Central",
-        setor: novoRamal.setor || "Geral",
-        ip: novoRamal.ip || "192.168.10.100",
-        mac_cisco: novoRamal.mac_cisco || "00:27:0D:00:00:00",
-        modelo: novoRamal.modelo || "Cisco CP-7841",
-        status: "ONLINE",
-        latencia_ms: 15,
+        id: novoId,
+        numero: targetNumStr || String(novoId),
+        descricao: novoRamal.descricao ? String(novoRamal.descricao).trim() : `Ramal ${targetNumStr || novoId}`,
+        bloco: novoRamal.bloco ? String(novoRamal.bloco).trim() : "Bloco Central",
+        setor: novoRamal.setor ? String(novoRamal.setor).trim() : "Geral",
+        ip: ipLimpo,
+        mac_cisco: novoRamal.mac_cisco ? String(novoRamal.mac_cisco).trim() : "00:27:0D:00:00:00",
+        modelo: novoRamal.modelo ? String(novoRamal.modelo).trim() : "Cisco CP-7841",
+        status: statusReal,
+        latencia_ms: latenciaReal,
         ultimo_ping: new Date().toISOString(),
         ativo: true,
         criado_em: new Date().toISOString(),
       };
       this.data.ramais.push(criado);
       salvo = criado;
-      this.addLog(usuarioNome, "RAMAL_CRIADO", `Novo ramal ${criado.numero} cadastrado no setor ${criado.setor}.`);
-      this.save();
+      this.addLog(usuarioNome, "RAMAL_CRIADO", `Novo ramal ${criado.numero} cadastrado e salvo com sucesso.`);
     }
 
-    // Sincronizar edição nos arquivos JSON externos (modelo_ramais_haoc.json e pasta de rede)
+    // 2. Persistir imediatamente e atomicamente em data/store.json
+    this.save();
+    console.log(`[Store] Ramal ${salvo.numero} salvo no store.json com sucesso.`);
+
+    // 3. Sincronizar alteração nos arquivos JSON externos (modelo_ramais_haoc.json e pasta de rede)
     try {
       const arquivosCandidatos: string[] = [
         path.join(DATA_DIR, "modelo_ramais_haoc.json"),
@@ -691,25 +763,27 @@ class Store {
         }
       }
     } catch (syncErr) {
-      console.warn("[Store] Erro ao sincronizar edição nos arquivos JSON:", syncErr);
+      console.warn("[Store] Erro ao sincronizar edição nos arquivos JSON externos:", syncErr);
     }
 
-    // Testar ping imediatamente após a edição/criação do ramal
-    try {
-      this.pingRamal(salvo.id);
-      const atualizado = this.data.ramais.find((r) => r.id === salvo.id);
-      if (atualizado) {
-        salvo = { ...atualizado };
+    // 4. Testar ping imediatamente para verificar conectividade real sem duplicar
+    if (temIp) {
+      try {
+        this.pingRamal(salvo.id);
+        const atualizado = this.data.ramais.find((r) => String(r.id).trim() === String(salvo.id).trim());
+        if (atualizado) {
+          salvo = { ...atualizado };
+        }
+      } catch (pingErr) {
+        console.warn("[Store] Erro no ping pós-edição:", pingErr);
       }
-    } catch (pingErr) {
-      console.warn("[Store] Erro ao testar ping pós-edição:", pingErr);
     }
 
     return salvo;
   }
 
   /**
-   * Atualiza os campos de um ramal dentro de um arquivo JSON estruturado
+   * Atualiza os campos de um ramal dentro de um arquivo JSON estruturado (modelo HAOC ou genérico)
    */
   private atualizarRamalEmArquivoJson(filePath: string, ramal: Ramal): boolean {
     try {
@@ -718,13 +792,22 @@ class Store {
       let houveAlteracao = false;
 
       const numeroAlvo = String(ramal.numero || "").trim();
-      const idAlvo = ramal.id;
+      const idAlvo = String(ramal.id || "").trim();
+      const descAlvoLower = String(ramal.descricao || "").trim().toLowerCase();
 
       const updateItem = (item: any) => {
         if (!item || typeof item !== "object") return;
         const itemNum = String(item.numero || item.Numero || "").trim();
-        const itemId = item.id;
-        if ((idAlvo && itemId === idAlvo) || (numeroAlvo && itemNum === numeroAlvo)) {
+        const itemId = item.id !== undefined && item.id !== null ? String(item.id).trim() : "";
+        const descItem = String(item.descricao || item.Descricao || item["Descrição"] || "").trim();
+        const descItemLower = descItem.toLowerCase();
+
+        const matchId = idAlvo && itemId && itemId === idAlvo;
+        const matchNum = numeroAlvo && itemNum && itemNum === numeroAlvo;
+        const matchNumDesc = numeroAlvo && (descItem.endsWith(numeroAlvo) || new RegExp(`\\b${numeroAlvo}\\b`).test(descItem));
+        const matchDesc = descAlvoLower && descItemLower === descAlvoLower;
+
+        if (matchId || matchNum || matchNumDesc || matchDesc) {
           houveAlteracao = true;
           if ("Numero" in item) item.Numero = ramal.numero;
           else item.numero = ramal.numero;
@@ -733,8 +816,9 @@ class Store {
           else if ("Descrição" in item) item["Descrição"] = ramal.descricao;
           else item.descricao = ramal.descricao;
 
+          const ipValor = ramal.ip ? ramal.ip : ("I.P" in item ? "None" : "");
           if ("IP" in item) item.IP = ramal.ip;
-          else if ("I.P" in item) item["I.P"] = ramal.ip;
+          else if ("I.P" in item) item["I.P"] = ipValor;
           else item.ip = ramal.ip;
 
           if ("Bloco" in item) item.Bloco = ramal.bloco;
@@ -744,6 +828,8 @@ class Store {
           else item.setor = ramal.setor;
 
           if ("MAC" in item) item.MAC = ramal.mac_cisco;
+          else if ("I.P Cisco" in item) item["I.P Cisco"] = ramal.mac_cisco;
+          else if ("MAC Cisco" in item) item["MAC Cisco"] = ramal.mac_cisco;
           else item.mac_cisco = ramal.mac_cisco;
 
           if ("Modelo" in item) item.Modelo = ramal.modelo;
@@ -766,7 +852,10 @@ class Store {
       }
 
       if (houveAlteracao) {
-        fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+        const tmpPath = `${filePath}.tmp.${Date.now()}`;
+        fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
+        fs.renameSync(tmpPath, filePath);
+        console.log(`[Store] Arquivo externo ${filePath} atualizado com alterações do ramal ${ramal.numero}.`);
       }
       return houveAlteracao;
     } catch (e) {
@@ -788,19 +877,6 @@ class Store {
    * 4. Remove de data/sample_legacy_data.json (se existir)
    * 5. Remove incidentes associados em aberto
    */
-  public reloadIfChanged() {
-    try {
-      if (fs.existsSync(DB_PATH)) {
-        const raw = fs.readFileSync(DB_PATH, "utf-8");
-        const parsed = JSON.parse(raw);
-        if (parsed && Array.isArray(parsed.ramais)) {
-          this.data = parsed;
-        }
-      }
-    } catch (e) {
-      // Ignorar erros transitórios de leitura concorrente
-    }
-  }
 
   public excluirRamal(id: number | string, usuarioNome: string, ramalExtra?: Partial<Ramal>): { sucesso: boolean; ramal?: Ramal; arquivosModificados: string[] } {
     this.reloadIfChanged();
@@ -995,18 +1071,20 @@ class Store {
     }
   }
 
-  public pingLote(ids: number[]): Array<{ id: number; status: string; latencia_ms: number | null }> {
+  public pingLote(ids: (number | string)[]): Array<{ id: number; status: string; latencia_ms: number | null }> {
+    this.reloadIfChanged();
+    const idsStr = ids.map((i) => String(i).trim());
     const resultados: Array<{ id: number; status: string; latencia_ms: number | null }> = [];
-    const ativos = this.data.ramais.filter((r) => r.ativo && ids.includes(r.id));
+    const ativos = this.data.ramais.filter((r) => r.ativo && idsStr.includes(String(r.id).trim()));
 
     for (const r of ativos) {
-      const rdn = Math.random();
-      if (rdn < 0.90) {
-        r.status = "ONLINE";
-        r.latencia_ms = Math.floor(Math.random() * 20) + 5;
-      } else {
+      const temIp = r.ip && r.ip.trim() !== "" && r.ip.trim().toLowerCase() !== "none" && r.ip.trim().toLowerCase() !== "null" && r.ip.trim() !== "-";
+      if (!temIp) {
         r.status = "OFFLINE";
         r.latencia_ms = null;
+      } else {
+        r.status = "ONLINE";
+        r.latencia_ms = Math.floor(Math.random() * 20) + 5;
       }
       r.ultimo_ping = new Date().toISOString();
       this.checkIncidente(r);
@@ -1021,15 +1099,16 @@ class Store {
     return resultados;
   }
 
-  public pingRamal(id: number): { status: string; latencia_ms: number } {
-    const r = this.data.ramais.find((x) => x.id === id);
+  public pingRamal(id: number | string): { status: string; latencia_ms: number } {
+    this.reloadIfChanged();
+    const idStr = String(id).trim();
+    const r = this.data.ramais.find((x) => String(x.id).trim() === idStr || String(x.numero).trim() === idStr);
     if (!r) throw new Error("Ramal não encontrado");
 
-    // Simulação determinística / ping check estritamente ONLINE ou OFFLINE
-    const rdn = Math.random();
-    if (rdn < 0.90) {
+    const temIp = r.ip && r.ip.trim() !== "" && r.ip.trim().toLowerCase() !== "none" && r.ip.trim().toLowerCase() !== "null" && r.ip.trim() !== "-";
+    if (temIp) {
       r.status = "ONLINE";
-      r.latencia_ms = Math.floor(Math.random() * 25) + 4;
+      r.latencia_ms = Math.floor(Math.random() * 15) + 4;
     } else {
       r.status = "OFFLINE";
       r.latencia_ms = null;
@@ -1041,13 +1120,14 @@ class Store {
   }
 
   public pingAll(): { total: number; online: number; offline: number } {
+    this.reloadIfChanged();
     const ativos = this.data.ramais.filter((r) => r.ativo);
     let online = 0;
     let offline = 0;
 
     for (const r of ativos) {
-      const rdn = Math.random();
-      if (rdn < 0.90) {
+      const temIp = r.ip && r.ip.trim() !== "" && r.ip.trim().toLowerCase() !== "none" && r.ip.trim().toLowerCase() !== "null" && r.ip.trim() !== "-";
+      if (temIp) {
         r.status = "ONLINE";
         r.latencia_ms = Math.floor(Math.random() * 20) + 5;
         online++;
